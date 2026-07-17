@@ -1,0 +1,18 @@
+drive:
+  device: "/dev/sda1"
+  mapper: "secure_drive"
+  mountPoint: "/mnt/secure"
+  keyFile: "/etc/secure-drive/keyfile"
+
+users:
+  file: "./users.json"
+
+security:
+  managerTimeout: 300
+  autoLockTimeout: 600
+
+server:
+  port: 8080
+
+logging:
+  file: "./audit.log"

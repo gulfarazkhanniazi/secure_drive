@@ -1,0 +1,41 @@
+# Secure Drive Controller Systemd Unit File
+#
+# Installation Instructions:
+# 1. Build the application binary for Linux:
+#    GOOS=linux GOARCH=amd64 go build -o secure-drive .
+# 2. Copy the binary to /usr/local/bin/:
+#    sudo cp secure-drive /usr/local/bin/
+# 3. Create config directory:
+#    sudo mkdir -p /etc/secure-drive
+# 4. Copy configuration, users.json, and templates to /etc/secure-drive/:
+#    sudo cp config.yaml users.json /etc/secure-drive/
+#    sudo cp -r templates /etc/secure-drive/
+# 5. Place this service file in /etc/systemd/system/:
+#    sudo cp secure-drive.service /etc/systemd/system/
+# 6. Reload systemd daemon:
+#    sudo systemctl daemon-reload
+# 7. Start and enable the service:
+#    sudo systemctl start secure-drive
+#    sudo systemctl enable secure-drive
+# 8. Check service status:
+#    sudo systemctl status secure-drive
+
+[Unit]
+Description=Secure Drive Controller Service
+After=network.target local-fs.target
+Wants=local-fs.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/etc/secure-drive
+ExecStart=/usr/local/bin/secure-drive
+Restart=always
+RestartSec=5
+
+# Keep audit logs safe. Standard logs go to Systemd journal.
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

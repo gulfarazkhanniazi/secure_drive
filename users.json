@@ -1,0 +1,20 @@
+{
+    "boss": {
+        "role": "Boss",
+        "secret": "6N5ISPVQBJO6MPBZ5P5YEXWMOWHK45MZ",
+        "issuer": "SecureDrive",
+        "account": "Boss"
+    },
+    "manager1": {
+        "role": "Manager",
+        "secret": "FWLHAUQWNEETNQUMDJWC7ZAXWPAN5X2O",
+        "issuer": "SecureDrive",
+        "account": "Manager1"
+    },
+    "manager2": {
+        "role": "Manager",
+        "secret": "IJ5G72LW2GQ4VVUZWLJDY5JX36YHCE5J",
+        "issuer": "SecureDrive",
+        "account": "Manager2"
+    }
+}
