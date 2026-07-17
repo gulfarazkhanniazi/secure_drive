@@ -1,8 +1,11 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"log"
+	"os"
+	"strings"
 
 	"secure-drive/internal/auth"
 	"secure-drive/internal/config"
@@ -10,6 +13,31 @@ import (
 	"secure-drive/internal/logger"
 	"secure-drive/internal/server"
 )
+
+func checkMultipleBossAccounts(usersPath string) {
+	data, err := os.ReadFile(usersPath)
+	if err != nil {
+		return
+	}
+
+	var rawUsers map[string]struct {
+		Role string `json:"role"`
+	}
+	if err := json.Unmarshal(data, &rawUsers); err != nil {
+		return
+	}
+
+	bossCount := 0
+	for _, u := range rawUsers {
+		if strings.ToLower(u.Role) == "boss" {
+			bossCount++
+		}
+	}
+
+	if bossCount > 1 {
+		log.Printf("WARNING: multiple Boss-role accounts detected — each can unlock the drive independently without co-signing")
+	}
+}
 
 func main() {
 	var err error
@@ -24,6 +52,15 @@ func main() {
 	err = auth.LoadUsers(config.AppConfig.Users.File)
 	if err != nil {
 		log.Fatalf("Error loading users: %v", err)
+	}
+
+	// Startup checks: verify no multiple boss accounts
+	checkMultipleBossAccounts(config.AppConfig.Users.File)
+
+	// Startup checks: verify keyfile integrity (Section 7)
+	err = drive.VerifyKeyfileIntegrity(config.AppConfig)
+	if err != nil {
+		log.Fatalf("Keyfile integrity check failed: %v", err)
 	}
 
 	// Setup users and check/initialize secrets if empty
@@ -58,8 +95,9 @@ func main() {
 
 	fmt.Println("\nSecurity")
 	fmt.Println("--------")
-	fmt.Printf("Manager Timeout : %d seconds\n", config.AppConfig.Security.ManagerTimeout)
-	fmt.Printf("Auto Lock       : %d seconds\n", config.AppConfig.Security.AutoLockTimeout)
+	fmt.Printf("Manager Timeout : %d seconds\n", config.GetManagerTimeout())
+	fmt.Printf("Auto Lock       : %d seconds\n", config.GetAutoLockTimeout())
+	fmt.Printf("Session Timeout : %d seconds\n", config.GetSessionTimeout())
 
 	fmt.Println("\nServer")
 	fmt.Println("------")
@@ -86,6 +124,10 @@ func main() {
 	// Start the background auto-lock daemon
 	drive.StartAutoLockDaemon(config.AppConfig)
 
+	// Start background physical drive watcher daemon (Section 3a)
+	drive.StartDeviceWatcher(config.AppConfig)
+
 	// Start the web server
 	server.StartServer(config.AppConfig)
 }
+

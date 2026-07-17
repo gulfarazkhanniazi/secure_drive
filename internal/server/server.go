@@ -8,6 +8,7 @@ import (
 	"html/template"
 	"log"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -36,6 +37,8 @@ type DashboardData struct {
 	Manager2Approved bool
 	Manager2TimeLeft int
 	AutoLockTimeLeft int
+	AutoLockTimeout  int
+	SessionTimeout   int
 	BossQR           string
 	Manager1QR       string
 	Manager2QR       string
@@ -85,25 +88,27 @@ func StartServer(cfg *config.Config) {
 		}
 
 		statusStr := "LOCKED"
-		if drive.IsUnlocked(cfg) {
+		if drive.IsDisconnectedUnexpectedly() {
+			statusStr = "DISCONNECTED_UNEXPECTEDLY"
+		} else if drive.IsUnlocked(cfg) {
 			statusStr = "UNLOCKED"
 		}
 
 		// Calculate auto-lock remaining time
 		autoLockTimeLeft := 0
-		if drive.IsUnlocked(cfg) {
+		if statusStr == "UNLOCKED" {
 			ut := drive.GetUnlockTime()
 			if !ut.IsZero() {
 				elapsed := time.Since(ut)
-				totalTimeout := time.Duration(cfg.Security.AutoLockTimeout) * time.Second
+				totalTimeout := time.Duration(config.GetAutoLockTimeout()) * time.Second
 				if elapsed < totalTimeout {
 					autoLockTimeLeft = int((totalTimeout - elapsed).Seconds())
 				}
 			}
 		}
 
-		// Get manager approvals
-		appr := auth.GetApprovalsStatus(cfg.Security.ManagerTimeout)
+		// Get manager approvals (for dashboard information)
+		appr := auth.GetApprovalsStatus(config.GetManagerTimeout())
 
 		// Generate Base64 QR codes dynamically
 		bossURL := auth.GenerateOTPURL(auth.AppUsers.Boss.Secret, auth.AppUsers.Boss.Account, auth.AppUsers.Boss.Issuer)
@@ -135,6 +140,8 @@ func StartServer(cfg *config.Config) {
 			Manager2Approved: appr.Manager2Approved,
 			Manager2TimeLeft: appr.Manager2TimeLeft,
 			AutoLockTimeLeft: autoLockTimeLeft,
+			AutoLockTimeout:  config.GetAutoLockTimeout(),
+			SessionTimeout:   config.GetSessionTimeout(),
 			BossQR:           bossQR,
 			Manager1QR:       m1QR,
 			Manager2QR:       m2QR,
@@ -158,10 +165,16 @@ func StartServer(cfg *config.Config) {
 		}
 
 		if r.Method == http.MethodGet {
+			appr := auth.GetApprovalsStatus(config.GetManagerTimeout())
 			data := DashboardData{
-				Title:    "Login - Secure Drive Controller",
-				LoggedIn: false,
-				Error:    r.URL.Query().Get("error"),
+				Title:            "Login - Secure Drive Controller",
+				LoggedIn:         false,
+				Manager1Approved: appr.Manager1Approved,
+				Manager1TimeLeft: appr.Manager1TimeLeft,
+				Manager2Approved: appr.Manager2Approved,
+				Manager2TimeLeft: appr.Manager2TimeLeft,
+				Error:            r.URL.Query().Get("error"),
+				Success:          r.URL.Query().Get("success"),
 			}
 			w.Header().Set("Content-Type", "text/html; charset=utf-8")
 			if err := tmpl.ExecuteTemplate(w, "index.html", data); err != nil {
@@ -179,6 +192,13 @@ func StartServer(cfg *config.Config) {
 			username := r.FormValue("username")
 			code := r.FormValue("code")
 
+			// Rate Limit / Lockout Check (Section 6)
+			if locked, duration := auth.CheckLockout(username); locked {
+				logger.Audit.Log("LOGIN_FAIL", username, "LOCKED_OUT")
+				http.Redirect(w, r, fmt.Sprintf("/login?error=User+%s+is+locked+out.+Try+again+in+%.0f+seconds.", username, duration.Seconds()), http.StatusSeeOther)
+				return
+			}
+
 			user, exists := auth.GetUser(username)
 			if !exists {
 				logger.Audit.Log("LOGIN_FAIL", username, "UNKNOWN_USER")
@@ -188,24 +208,101 @@ func StartServer(cfg *config.Config) {
 
 			if !auth.VerifyCode(user.Secret, code) {
 				logger.Audit.Log("LOGIN_FAIL", username, "BAD_TOTP")
+				lockoutTriggered := auth.RecordFailedAttempt(username)
+				if lockoutTriggered {
+					logger.Audit.Log("USER_LOCKED_OUT", username, "too_many_failed_totp_attempts")
+					http.Redirect(w, r, fmt.Sprintf("/login?error=Too+many+failed+attempts.+User+%s+is+locked+out+for+15+minutes.", username), http.StatusSeeOther)
+					return
+				}
 				http.Redirect(w, r, fmt.Sprintf("/login?error=Authentication+failed+for+%s", username), http.StatusSeeOther)
 				return
 			}
 
-			// Successful Login
-			token := auth.CreateSession(username, user.Role)
-			cookie := &http.Cookie{
-				Name:     "session_token",
-				Value:    token,
-				Expires:  time.Now().Add(30 * time.Minute),
-				HttpOnly: true,
-				Path:     "/",
-			}
-			http.SetCookie(w, cookie)
+			// Reset failed attempts on success
+			auth.ResetFailedAttempts(username)
 
-			logger.Audit.Log("LOGIN_SUCCESS", username, "SUCCESS")
-			http.Redirect(w, r, "/", http.StatusSeeOther)
+			// Handle Boss Login (Immediate)
+			if strings.ToLower(username) == "boss" {
+				token := auth.CreateSession(username, user.Role)
+				cookie := &http.Cookie{
+					Name:     "session_token",
+					Value:    token,
+					Expires:  time.Now().Add(time.Duration(config.GetSessionTimeout()) * time.Second),
+					HttpOnly: true,
+					Path:     "/",
+				}
+				http.SetCookie(w, cookie)
+				logger.Audit.Log("LOGIN_SUCCESS", username, "SUCCESS")
+				http.Redirect(w, r, "/", http.StatusSeeOther)
+				return
+			}
+
+			// Handle Manager Co-Signing Login Flow (Section 1)
+			unlocked, msg, err := auth.RecordApproval(username, config.GetManagerTimeout())
+			if err != nil {
+				http.Redirect(w, r, fmt.Sprintf("/login?error=%v", err), http.StatusSeeOther)
+				return
+			}
+
+			if unlocked {
+				// Both managers approved! Clear approvals state and log them in
+				auth.ClearManagerApprovals()
+				token := auth.CreateSession("Managers", "Manager")
+				cookie := &http.Cookie{
+					Name:     "session_token",
+					Value:    token,
+					Expires:  time.Now().Add(time.Duration(config.GetSessionTimeout()) * time.Second),
+					HttpOnly: true,
+					Path:     "/",
+				}
+				http.SetCookie(w, cookie)
+				logger.Audit.Log("LOGIN_SUCCESS", "Managers", "SUCCESS")
+				http.Redirect(w, r, "/", http.StatusSeeOther)
+				return
+			}
+
+			// First manager verified, wait for second manager
+			http.Redirect(w, r, fmt.Sprintf("/login?success=%s", msg), http.StatusSeeOther)
 		}
+	})
+
+	// Settings Form Handler (Section 2 & 5)
+	http.HandleFunc("/settings", func(w http.ResponseWriter, r *http.Request) {
+		sess, ok := getSessionUser(r)
+		if !ok {
+			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			return
+		}
+
+		if r.Method != http.MethodPost {
+			http.Redirect(w, r, "/", http.StatusSeeOther)
+			return
+		}
+
+		if err := r.ParseForm(); err != nil {
+			http.Redirect(w, r, "/?error=Invalid+settings+form", http.StatusSeeOther)
+			return
+		}
+
+		autoLockVal, err1 := strconv.Atoi(r.FormValue("auto_lock_timeout"))
+		sessionVal, err2 := strconv.Atoi(r.FormValue("session_timeout"))
+
+		if err1 != nil || err2 != nil {
+			http.Redirect(w, r, "/?error=Invalid+numeric+timeout+values", http.StatusSeeOther)
+			return
+		}
+
+		oldAutoLock, oldSession, err := config.UpdateSecuritySettings(autoLockVal, sessionVal)
+		if err != nil {
+			http.Redirect(w, r, fmt.Sprintf("/?error=%v", err), http.StatusSeeOther)
+			return
+		}
+
+		// Log audit events
+		logger.Audit.Log(fmt.Sprintf("AUTO_LOCK_TIMEOUT_CHANGED old=%d new=%d user=%s", oldAutoLock, autoLockVal, sess.Username), sess.Username, "SUCCESS")
+		logger.Audit.Log(fmt.Sprintf("SESSION_TIMEOUT_CHANGED old=%d new=%d user=%s", oldSession, sessionVal, sess.Username), sess.Username, "SUCCESS")
+
+		http.Redirect(w, r, "/?success=Settings+updated+successfully", http.StatusSeeOther)
 	})
 
 	// Logout handler
@@ -226,7 +323,7 @@ func StartServer(cfg *config.Config) {
 		http.Redirect(w, r, "/login", http.StatusSeeOther)
 	})
 
-	// Unlock handler (Boss only)
+	// Unlock handler (Boss / Managers logged in)
 	http.HandleFunc("/unlock", func(w http.ResponseWriter, r *http.Request) {
 		sess, ok := getSessionUser(r)
 		if !ok {
@@ -234,9 +331,10 @@ func StartServer(cfg *config.Config) {
 			return
 		}
 
-		if strings.ToLower(sess.Username) != "boss" {
+		roleLower := strings.ToLower(sess.Role)
+		if roleLower != "boss" && roleLower != "manager" {
 			logger.Audit.Log("UNAUTHORIZED_UNLOCK_ATTEMPT", sess.Username, "FAILURE")
-			http.Redirect(w, r, "/?error=Only+the+Boss+can+unlock+directly", http.StatusSeeOther)
+			http.Redirect(w, r, "/?error=Unauthorized+role+to+unlock+drive", http.StatusSeeOther)
 			return
 		}
 
@@ -248,58 +346,13 @@ func StartServer(cfg *config.Config) {
 		err := drive.UnlockDrive(cfg)
 		if err != nil {
 			log.Printf("Error unlocking drive: %v", err)
-			logger.Audit.Log("DRIVE_UNLOCK", "Boss", "FAILURE")
+			logger.Audit.Log("DRIVE_UNLOCK", sess.Username, "FAILURE")
 			http.Redirect(w, r, fmt.Sprintf("/?error=Failed+to+unlock+drive:+%v", err), http.StatusSeeOther)
 			return
 		}
 
-		logger.Audit.Log("DRIVE_UNLOCK", "Boss", "SUCCESS")
-		auth.ClearManagerApprovals()
-		http.Redirect(w, r, "/?success=Drive+unlocked+successfully+by+Boss", http.StatusSeeOther)
-	})
-
-	// Authorize handler (Managers only)
-	http.HandleFunc("/authorize", func(w http.ResponseWriter, r *http.Request) {
-		sess, ok := getSessionUser(r)
-		if !ok {
-			http.Error(w, "Unauthorized", http.StatusUnauthorized)
-			return
-		}
-
-		usernameLower := strings.ToLower(sess.Username)
-		if usernameLower != "manager1" && usernameLower != "manager2" {
-			logger.Audit.Log("UNAUTHORIZED_APPROVAL_ATTEMPT", sess.Username, "FAILURE")
-			http.Redirect(w, r, "/?error=Only+managers+can+authorize+unlocks", http.StatusSeeOther)
-			return
-		}
-
-		if drive.IsUnlocked(cfg) {
-			http.Redirect(w, r, "/?success=Drive+is+already+unlocked", http.StatusSeeOther)
-			return
-		}
-
-		unlocked, msg, err := auth.RecordApproval(sess.Username, cfg.Security.ManagerTimeout)
-		if err != nil {
-			http.Redirect(w, r, fmt.Sprintf("/?error=%v", err), http.StatusSeeOther)
-			return
-		}
-
-		logger.Audit.Log("MANAGER_APPROVAL", sess.Username, "SUCCESS")
-
-		if unlocked {
-			err := drive.UnlockDrive(cfg)
-			if err != nil {
-				log.Printf("Dual managers approved but drive unlock failed: %v", err)
-				logger.Audit.Log("DRIVE_UNLOCK", "Manager1+Manager2", "FAILURE")
-				http.Redirect(w, r, fmt.Sprintf("/?error=Managers+approved+but+unlock+failed:+%v", err), http.StatusSeeOther)
-				return
-			}
-			logger.Audit.Log("DRIVE_UNLOCK", "Manager1+Manager2", "SUCCESS")
-			http.Redirect(w, r, "/?success=Drive+unlocked+successfully+by+Dual+Manager+Approvals", http.StatusSeeOther)
-			return
-		}
-
-		http.Redirect(w, r, fmt.Sprintf("/?success=%s", msg), http.StatusSeeOther)
+		logger.Audit.Log("DRIVE_UNLOCK", sess.Username, "SUCCESS")
+		http.Redirect(w, r, fmt.Sprintf("/?success=Drive+unlocked+successfully+by+%s", sess.Username), http.StatusSeeOther)
 	})
 
 	// Lock handler (All authenticated users)
@@ -339,23 +392,25 @@ func StartServer(cfg *config.Config) {
 
 		statusStr := "LOCKED"
 		unlocked := drive.IsUnlocked(cfg)
-		if unlocked {
+		if drive.IsDisconnectedUnexpectedly() {
+			statusStr = "DISCONNECTED_UNEXPECTEDLY"
+		} else if unlocked {
 			statusStr = "UNLOCKED"
 		}
 
 		autoLockTimeLeft := 0
-		if unlocked {
+		if unlocked && statusStr != "DISCONNECTED_UNEXPECTEDLY" {
 			ut := drive.GetUnlockTime()
 			if !ut.IsZero() {
 				elapsed := time.Since(ut)
-				totalTimeout := time.Duration(cfg.Security.AutoLockTimeout) * time.Second
+				totalTimeout := time.Duration(config.GetAutoLockTimeout()) * time.Second
 				if elapsed < totalTimeout {
 					autoLockTimeLeft = int((totalTimeout - elapsed).Seconds())
 				}
 			}
 		}
 
-		appr := auth.GetApprovalsStatus(cfg.Security.ManagerTimeout)
+		appr := auth.GetApprovalsStatus(config.GetManagerTimeout())
 
 		response := map[string]interface{}{
 			"status":           statusStr,
@@ -369,8 +424,9 @@ func StartServer(cfg *config.Config) {
 			"autoLockTimeLeft": autoLockTimeLeft,
 			"currentUser":      sess.Username,
 			"currentRole":      sess.Role,
-			"autoLockTimeout":  cfg.Security.AutoLockTimeout,
-			"managerTimeout":   cfg.Security.ManagerTimeout,
+			"autoLockTimeout":  config.GetAutoLockTimeout(),
+			"sessionTimeout":   config.GetSessionTimeout(),
+			"managerTimeout":   config.GetManagerTimeout(),
 		}
 
 		w.Header().Set("Content-Type", "application/json")

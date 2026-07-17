@@ -275,6 +275,13 @@
             animation: pulse-success 2s infinite;
         }
 
+        .badge-warning {
+            background-color: rgba(245, 158, 11, 0.15);
+            border: 1px solid rgba(245, 158, 11, 0.3);
+            color: var(--accent-warning);
+            animation: pulse-warning 2s infinite;
+        }
+
         @keyframes pulse-danger {
             0% { box-shadow: 0 0 0 0 rgba(244, 63, 94, 0.4); }
             70% { box-shadow: 0 0 0 6px rgba(244, 63, 94, 0); }
@@ -285,6 +292,12 @@
             0% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.4); }
             70% { box-shadow: 0 0 0 6px rgba(16, 185, 129, 0); }
             100% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0); }
+        }
+
+        @keyframes pulse-warning {
+            0% { box-shadow: 0 0 0 0 rgba(245, 158, 11, 0.4); }
+            70% { box-shadow: 0 0 0 6px rgba(245, 158, 11, 0); }
+            100% { box-shadow: 0 0 0 0 rgba(245, 158, 11, 0); }
         }
 
         .info-row {
@@ -540,6 +553,33 @@
                 </div>
             {{end}}
 
+            {{if .Success}}
+                <div class="alert alert-success">
+                    {{.Success}}
+                </div>
+            {{end}}
+
+            <!-- CO-SIGNING STATUS DISPLAY (FOR MANAGERS) -->
+            {{if or .Manager1Approved .Manager2Approved}}
+            <div style="margin-bottom: 25px;">
+                <label>Co-Signing Verification</label>
+                <div class="approval-list">
+                    <div class="approval-item {{if .Manager1Approved}}approved{{else}}pending{{end}}">
+                        <span class="approval-indicator"></span>
+                        <span class="approval-text">
+                            {{if .Manager1Approved}}Manager 1: Verified ({{.Manager1TimeLeft}}s left){{else}}Manager 1: Pending{{end}}
+                        </span>
+                    </div>
+                    <div class="approval-item {{if .Manager2Approved}}approved{{else}}pending{{end}}">
+                        <span class="approval-indicator"></span>
+                        <span class="approval-text">
+                            {{if .Manager2Approved}}Manager 2: Verified ({{.Manager2TimeLeft}}s left){{else}}Manager 2: Pending{{end}}
+                        </span>
+                    </div>
+                </div>
+            </div>
+            {{end}}
+
             <form action="/login" method="POST">
                 <div class="form-group">
                     <label for="username">Select Identity</label>
@@ -559,7 +599,7 @@
             </form>
             
             <div class="footer-setup-note">
-                Need to set up authenticator? Ask administrator for setup keys or configure client apps.
+                Need to set up authenticator? Ask administrator for setup QR codes below.
             </div>
         </div>
     {{else}}
@@ -591,7 +631,7 @@
             <div class="card">
                 <div class="status-header">
                     <h2>Drive Details</h2>
-                    <span id="drive-status-badge" class="badge {{if eq .Status `UNLOCKED`}}badge-success{{else}}badge-danger{{end}}">
+                    <span id="drive-status-badge" class="badge {{if eq .Status `UNLOCKED`}}badge-success{{else if eq .Status `DISCONNECTED_UNEXPECTEDLY`}}badge-warning{{else}}badge-danger{{end}}">
                         {{.Status}}
                     </span>
                 </div>
@@ -619,23 +659,6 @@
                         </div>
                     </div>
                 </div>
-
-                <!-- DUAL AUTHENTICATION PROGRESS -->
-                <div class="section-title">Co-Signing Status (Managers)</div>
-                <div class="approval-list">
-                    <div class="approval-item {{if .Manager1Approved}}approved{{else}}pending{{end}}" id="mgr1-status">
-                        <span class="approval-indicator"></span>
-                        <span class="approval-text">
-                            {{if .Manager1Approved}}Manager 1: Approved ({{.Manager1TimeLeft}}s left){{else}}Manager 1: Pending{{end}}
-                        </span>
-                    </div>
-                    <div class="approval-item {{if .Manager2Approved}}approved{{else}}pending{{end}}" id="mgr2-status">
-                        <span class="approval-indicator"></span>
-                        <span class="approval-text">
-                            {{if .Manager2Approved}}Manager 2: Approved ({{.Manager2TimeLeft}}s left){{else}}Manager 2: Pending{{end}}
-                        </span>
-                    </div>
-                </div>
             </div>
 
             <!-- CONTROLS CARD -->
@@ -643,19 +666,15 @@
                 <h2 style="font-size:1.4rem; border-bottom: 1px solid var(--border-color); padding-bottom: 15px;">Actions</h2>
                 
                 {{if eq .Status "LOCKED"}}
-                    {{if eq .Role "Boss"}}
-                        <p style="color:var(--text-secondary); margin-bottom:10px;">As Boss, you can unlock the drive immediately using your credentials.</p>
-                        <form action="/unlock" method="POST">
-                            <button type="submit" class="btn btn-success">🔓 Unlock Encrypted Drive</button>
-                        </form>
-                    {{else if eq .Role "Manager"}}
-                        <p style="color:var(--text-secondary); margin-bottom:10px;">Managers must co-sign. Clicking below registers your approval. The drive unlocks once both managers co-sign within the timeout window.</p>
-                        <form action="/authorize" method="POST">
-                            <button type="submit" class="btn">🔑 Register Co-Signature</button>
-                        </form>
-                    {{else}}
-                        <p style="color:var(--text-secondary);">Unauthorized user role.</p>
-                    {{end}}
+                    <p style="color:var(--text-secondary); margin-bottom:10px;">You are fully authenticated and authorized to unlock the drive.</p>
+                    <form action="/unlock" method="POST">
+                        <button type="submit" class="btn btn-success">🔓 Unlock Encrypted Drive</button>
+                    </form>
+                {{else if eq .Status "DISCONNECTED_UNEXPECTEDLY"}}
+                    <p style="color:var(--accent-danger); margin-bottom:10px;">WARNING: The drive was unexpectedly disconnected. Once reconnected, click below to run safety check and mount.</p>
+                    <form action="/unlock" method="POST">
+                        <button type="submit" class="btn btn-success">🛠️ Recover & Unlock Drive</button>
+                    </form>
                 {{else}}
                     <!-- UNLOCKED - ALL authenticated users can lock -->
                     <p style="color:var(--text-secondary); margin-bottom:10px;">The encrypted drive is currently decrypted and mounted. Any authenticated user can trigger a manual secure lock.</p>
@@ -664,6 +683,22 @@
                     </form>
                 {{end}}
             </div>
+        </div>
+
+        <!-- SETTINGS CARD (BOSS / MANAGERS) -->
+        <div class="card" style="margin-top: 25px;">
+            <h2 style="font-size:1.4rem; border-bottom: 1px solid var(--border-color); padding-bottom: 15px; margin-bottom: 20px;">System Settings</h2>
+            <form action="/settings" method="POST">
+                <div class="form-group">
+                    <label for="auto_lock_timeout">Auto-Lock Timeout (seconds, 60 - 3600)</label>
+                    <input type="number" id="auto_lock_timeout" name="auto_lock_timeout" min="60" max="3600" value="{{.AutoLockTimeout}}" required>
+                </div>
+                <div class="form-group">
+                    <label for="session_timeout">Session Idle Timeout (seconds, 60 - 86400)</label>
+                    <input type="number" id="session_timeout" name="session_timeout" min="60" max="86400" value="{{.SessionTimeout}}" required>
+                </div>
+                <button type="submit" class="btn">Save Settings</button>
+            </form>
         </div>
 
         <!-- TABS FOR EXTRA LOGS & QR CONFIGS -->
@@ -695,7 +730,7 @@
                             <td><strong>{{.User}}</strong></td>
                             <td style="font-family:monospace;">{{.Action}}</td>
                             <td>
-                                <span class="badge-status {{if eq .Status `SUCCESS`}}status-success{{else}}status-failure{{end}}">
+                                <span class="badge-status {{if eq .Status `SUCCESS`}}status-success{{else if eq .Status `CRITICAL`}}status-failure{{else}}status-failure{{end}}">
                                     {{.Status}}
                                 </span>
                             </td>
@@ -757,6 +792,8 @@
                                 statusEl.textContent = data.status;
                                 if (data.status === "UNLOCKED") {
                                     statusEl.className = "badge badge-success";
+                                } else if (data.status === "DISCONNECTED_UNEXPECTEDLY") {
+                                    statusEl.className = "badge badge-warning";
                                 } else {
                                     statusEl.className = "badge badge-danger";
                                 }
@@ -783,29 +820,6 @@
                                 if (autoLockSection) autoLockSection.style.display = "none";
                             }
                             
-                            // Update Manager approvals status
-                            const m1El = document.getElementById("mgr1-status");
-                            if (m1El) {
-                                if (data.manager1Approved) {
-                                    m1El.className = "approval-item approved";
-                                    m1El.querySelector(".approval-text").textContent = `Manager 1: Approved (${data.manager1TimeLeft}s left)`;
-                                } else {
-                                    m1El.className = "approval-item pending";
-                                    m1El.querySelector(".approval-text").textContent = "Manager 1: Pending";
-                                }
-                            }
-                            
-                            const m2El = document.getElementById("mgr2-status");
-                            if (m2El) {
-                                if (data.manager2Approved) {
-                                    m2El.className = "approval-item approved";
-                                    m2El.querySelector(".approval-text").textContent = `Manager 2: Approved (${data.manager2TimeLeft}s left)`;
-                                } else {
-                                    m2El.className = "approval-item pending";
-                                    m2El.querySelector(".approval-text").textContent = "Manager 2: Pending";
-                                }
-                            }
-
                             // If lock state changed and action buttons need toggling, reload page to refresh session state.
                             const currentUIPendingState = document.getElementById("luks-state-tracker").value;
                             if (currentUIPendingState !== data.status) {

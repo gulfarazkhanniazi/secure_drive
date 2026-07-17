@@ -6,6 +6,9 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"secure-drive/internal/config"
+	"secure-drive/internal/logger"
 )
 
 type Session struct {
@@ -16,12 +19,20 @@ type Session struct {
 	ExpiresAt time.Time
 }
 
+type UserLoginState struct {
+	FailedAttempts []time.Time
+	LockedUntil    time.Time
+}
+
 var (
 	sessionsMu sync.RWMutex
 	sessions   = make(map[string]*Session)
 
 	approvalMu sync.Mutex
 	approvals  = make(map[string]time.Time) // lowercase username -> approval time
+
+	lockoutMu    sync.Mutex
+	userLockouts = make(map[string]*UserLoginState)
 )
 
 func generateRandomToken() string {
@@ -38,12 +49,13 @@ func CreateSession(username, role string) string {
 
 	token := generateRandomToken()
 	now := time.Now()
+	timeout := time.Duration(config.GetSessionTimeout()) * time.Second
 	sessions[token] = &Session{
 		Token:     token,
 		Username:  username,
 		Role:      role,
 		CreatedAt: now,
-		ExpiresAt: now.Add(30 * time.Minute),
+		ExpiresAt: now.Add(timeout),
 	}
 	return token
 }
@@ -58,12 +70,14 @@ func ValidateSessionToken(token string) (*Session, bool) {
 	}
 
 	if time.Now().After(sess.ExpiresAt) {
+		logger.Audit.Log("SESSION_EXPIRED", sess.Username, "SUCCESS")
 		delete(sessions, token)
 		return nil, false
 	}
 
 	// Slide expiration
-	sess.ExpiresAt = time.Now().Add(30 * time.Minute)
+	timeout := time.Duration(config.GetSessionTimeout()) * time.Second
+	sess.ExpiresAt = time.Now().Add(timeout)
 	return sess, true
 }
 
@@ -107,6 +121,7 @@ func GetApprovalsStatus(timeoutSec int) ApprovalsStatus {
 			status.Manager1TimeLeft = int((timeout - elapsed).Seconds())
 		} else {
 			delete(approvals, "manager1")
+			logger.Audit.Log("MANAGER_APPROVAL_EXPIRED", "Manager1", "EXPIRED")
 		}
 	}
 
@@ -117,6 +132,7 @@ func GetApprovalsStatus(timeoutSec int) ApprovalsStatus {
 			status.Manager2TimeLeft = int((timeout - elapsed).Seconds())
 		} else {
 			delete(approvals, "manager2")
+			logger.Audit.Log("MANAGER_APPROVAL_EXPIRED", "Manager2", "EXPIRED")
 		}
 	}
 
@@ -156,3 +172,60 @@ func RecordApproval(username string, timeoutSec int) (bool, string, error) {
 	timeLeft := int(timeout.Seconds())
 	return false, fmt.Sprintf("%s approved. Waiting for %s within %d seconds.", username, otherKey, timeLeft), nil
 }
+
+func CheckLockout(username string) (bool, time.Duration) {
+	lockoutMu.Lock()
+	defer lockoutMu.Unlock()
+
+	userKey := strings.ToLower(username)
+	state, exists := userLockouts[userKey]
+	if !exists {
+		return false, 0
+	}
+
+	if time.Now().Before(state.LockedUntil) {
+		return true, time.Until(state.LockedUntil)
+	}
+
+	return false, 0
+}
+
+func RecordFailedAttempt(username string) bool {
+	lockoutMu.Lock()
+	defer lockoutMu.Unlock()
+
+	userKey := strings.ToLower(username)
+	state, exists := userLockouts[userKey]
+	if !exists {
+		state = &UserLoginState{}
+		userLockouts[userKey] = state
+	}
+
+	now := time.Now()
+	state.FailedAttempts = append(state.FailedAttempts, now)
+
+	// Clean up attempts older than 5 minutes
+	cutoff := now.Add(-5 * time.Minute)
+	var validAttempts []time.Time
+	for _, t := range state.FailedAttempts {
+		if t.After(cutoff) {
+			validAttempts = append(validAttempts, t)
+		}
+	}
+	state.FailedAttempts = validAttempts
+
+	if len(state.FailedAttempts) >= 5 {
+		state.LockedUntil = now.Add(15 * time.Minute)
+		return true // Lockout triggered
+	}
+	return false
+}
+
+func ResetFailedAttempts(username string) {
+	lockoutMu.Lock()
+	defer lockoutMu.Unlock()
+
+	userKey := strings.ToLower(username)
+	delete(userLockouts, userKey)
+}
+

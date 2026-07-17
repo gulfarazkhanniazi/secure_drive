@@ -3,6 +3,7 @@ package logger
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"time"
 )
 
@@ -16,6 +17,14 @@ func InitLogger(path string) {
 	Audit = &Logger{
 		File: path,
 	}
+	// Try to apply append-only attribute at startup
+	Audit.makeAppendOnly()
+}
+
+func (l *Logger) makeAppendOnly() {
+	// Execute chattr +a to set append-only attribute.
+	// On non-Linux/ext4 environments this will fail, which we ignore.
+	_ = exec.Command("chattr", "+a", l.File).Run()
 }
 
 func (l *Logger) Log(action, user, status string) error {
@@ -38,5 +47,12 @@ func (l *Logger) Log(action, user, status string) error {
 	)
 
 	_, err = file.WriteString(entry)
-	return err
+	if err != nil {
+		return err
+	}
+
+	// Apply append-only attribute again
+	l.makeAppendOnly()
+	return nil
 }
+

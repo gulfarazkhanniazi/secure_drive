@@ -90,3 +90,53 @@ func TestManagerAuthorizationEngine(t *testing.T) {
 		t.Errorf("Drive unlocked after approval timeout had expired")
 	}
 }
+
+func TestTOTPLockout(t *testing.T) {
+	username := "TestRateLimitUser"
+	
+	// Reset any existing state
+	ResetFailedAttempts(username)
+	
+	// 1. Should not be locked out initially
+	locked, _ := CheckLockout(username)
+	if locked {
+		t.Fatalf("user was locked out initially")
+	}
+	
+	// 2. Perform 4 failed attempts
+	for i := 0; i < 4; i++ {
+		lockoutTriggered := RecordFailedAttempt(username)
+		if lockoutTriggered {
+			t.Fatalf("lockout triggered prematurely at attempt %d", i+1)
+		}
+	}
+	
+	// Still not locked out
+	locked, _ = CheckLockout(username)
+	if locked {
+		t.Fatalf("user was locked out after only 4 attempts")
+	}
+	
+	// 3. 5th failed attempt triggers lockout
+	lockoutTriggered := RecordFailedAttempt(username)
+	if !lockoutTriggered {
+		t.Fatalf("lockout not triggered at 5th attempt")
+	}
+	
+	// Verify lockout state is active
+	locked, duration := CheckLockout(username)
+	if !locked {
+		t.Fatalf("CheckLockout returned false, expected true")
+	}
+	if duration <= 14*time.Minute {
+		t.Errorf("expected lockout duration to be around 15 minutes, got %v", duration)
+	}
+	
+	// 4. Reset/Success resets failed attempts
+	ResetFailedAttempts(username)
+	locked, _ = CheckLockout(username)
+	if locked {
+		t.Errorf("lockout was not cleared after reset")
+	}
+}
+

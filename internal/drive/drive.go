@@ -15,11 +15,15 @@ type DriveStatus struct {
 }
 
 func GetDriveStatus(cfg *config.Config) DriveStatus {
+	mu.Lock()
+	defer mu.Unlock()
+	return getDriveStatusNoLock(cfg)
+}
+
+func getDriveStatusNoLock(cfg *config.Config) DriveStatus {
 	if IsMockMode() {
-		mu.Lock()
-		defer mu.Unlock()
 		return DriveStatus{
-			DeviceExists: true,
+			DeviceExists: mockDeviceExists,
 			MapperOpen:   mockUnlocked,
 			Mounted:      mockMounted,
 		}
@@ -49,3 +53,4 @@ func GetDriveStatus(cfg *config.Config) DriveStatus {
 
 	return status
 }
+

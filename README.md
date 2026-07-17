@@ -143,3 +143,58 @@ sudo systemctl start secure-drive
 sudo systemctl status secure-drive
 sudo journalctl -u secure-drive -f
 ```
+
+---
+
+## Enhanced Security Features & Run-Time Configuration
+
+### 1. Dual-Manager Login Co-Signing Flow
+Managers (Manager 1 and Manager 2) co-sign directly on the **Login Page** before any session is created. 
+- Either manager can enter their TOTP first.
+- The system remembers the first manager's verification (for up to the configured Manager Timeout, e.g. 5 minutes) and displays a pending status showing the remaining time.
+- The second manager can then verify their TOTP. Once both are verified, the session is created under the identity `Managers`.
+- No co-signing actions are needed post-login on the dashboard.
+
+### 2. Runtime Timeout Settings
+Authenticated users with unlock privileges can adjust security timeouts dynamically from the dashboard:
+- **Auto-Lock Timeout**: Range of `60` seconds (1 min) to `3600` seconds (1 hour). Prevents unauthorized access after the drive is left unattended.
+- **Session Idle Timeout**: Range of `60` seconds (1 min) to `86400` seconds (24 hours). Expired sessions require a fresh login (including TOTP validation).
+- Settings updates are written **atomically** to `config.yaml` using a temporary write-and-rename mechanism protected by a mutex, surviving daemon restarts.
+- Auto-lock daemon and HTTP sessions check these values dynamically at runtime.
+
+### 3. Unclean Disconnect Safety & Recovery
+If the physical storage drive is forcibly removed while decrypted and mounted:
+- **Watcher Daemon**: A background thread polls every 3 seconds checking the presence of the block device. If the device disappears while the LUKS mapper is active, it logs a `CRITICAL` event: `UNEXPECTED_DEVICE_REMOVAL`.
+- **Ejection Cleanup**: The watcher runs a best-effort recovery: executing lazy unmount (`umount -l`) and clearing mapper tables (`dmsetup remove`), transitioning state to `DISCONNECTED_UNEXPECTEDLY` to warn operators.
+- **FS Checker (e2fsck)**: When the device is reconnected and unlocking is initiated, the system runs `e2fsck -p` on the mapper device. If unrecoverable filesystem errors are detected (exit code >= 4), mounting is blocked, reporting `FILESYSTEM_CHECK_FAILED`. On clean check/repair, it proceeds to mount and logs `FILESYSTEM_CHECK_PASSED` / `FILESYSTEM_REPAIRED`.
+- **Fsync & Lock Syncing**: The service executes `fsync()` on its file handles after writes. Prior to any lock action, it executes system `sync` and checks for open file handles on the mount point (using `fuser -m`). If busy, it retries 3 times before failing the lock attempt with a clear error instead of forcing it.
+
+> [!WARNING]
+> **Filesystem Risk Disclosure**: While LUKS sector writes are atomic and mitigations like `fsync` and `sync` significantly reduce corruption windows, forced hardware ejections during active operations cannot guarantee zero data loss at the ext4/filesystem journal layer. This is an inherent physical storage limitation.
+
+### 4. Concurrency Safety
+All functions mutating or checking drive status share a package-level mutex (`mu`). Concurrent lock/unlock requests queue safely behind the mutex, verifying status under lock to avoid duplicate `cryptsetup open` or mount calls.
+
+### 5. TOTP Rate Limiting
+- The system tracks consecutive failed TOTP attempts per user in memory.
+- After **5 consecutive failures** within a 5-minute rolling window, the user is locked out for a **15-minute cooldown** period.
+- Lockout triggers are logged as: `USER_LOCKED_OUT user=<username> reason=too_many_failed_totp_attempts`.
+- Successful logins reset the failure counter.
+
+### 6. Keyfile Integrity Check
+On application startup, before serving any web requests, the system checks the keyfile from `config.yaml`:
+- The keyfile must exist.
+- Permissions must be exactly `600` (or stricter, i.e., group/world must have no permissions).
+- Owner must be root or the user running the application.
+- If these checks fail, the application logs a `CRITICAL` error and refuses to start.
+
+### 7. Audit Log Tamper Resistance
+After every log write and at startup, the system sets the audit log to append-only: `chattr +a audit.log`.
+
+> [!NOTE]
+> **Tamper Resistance limitations**: Setting `+a` requires an ext4-compatible filesystem supporting filesystem attributes. While this raises the bar against accidental truncation or less-privileged compromise, it is a defense-in-depth measure; a fully compromised root process can still clear the attribute and alter logs.
+
+### 8. Multiple Boss Accounts Check
+If `users.json` defines more than one account with the role `Boss`, the application logs a startup warning:
+`WARNING: multiple Boss-role accounts detected — each can unlock the drive independently without co-signing`.
+This flags changes to the security architecture from a single trusted identity to a multi-boss instant-unlock model.
