@@ -6,13 +6,26 @@ A production-ready, Go-based service designed to securely manage access to a sin
 
 ## Key Features
 
-1. **Robust Multi-Factor Authorization Rules**:
-   - **Boss Identity**: Can unlock and mount the drive instantly using a valid TOTP code.
-   - **Managers (Manager 1 + Manager 2)**: Neither manager can unlock alone. Both managers must co-sign (authenticate via TOTP) within a configurable timeout window to decrypt and mount the drive.
-2. **Dynamic In-Memory QR Codes**: Eliminates filesystem write permissions and local PNG garbage. QR codes are generated dynamically in-memory, base64-encoded, and rendered as inline Data URIs inside the browser setup tab.
-3. **Embedded UI Assets (`go:embed`)**: Compiles dashboard HTML files directly into the Go executable, creating a 100% self-contained binary that can be deployed anywhere without asset-copying steps.
-4. **Daemon Auto-Lock Timer**: An active background daemon continuously checks the mount duration, automatically unmounting and closing the LUKS container when the auto-lock timeout is reached.
-5. **Platform-Independent Mock Mode**: Automatically fallback to memory-simulated drive operations when running on macOS/Windows, allowing developers to fully test the web interfaces and state machines locally.
+1. **Independent Manager Sessions with Live AND-Gate**:
+   - **Manager1 and Manager2 each log in independently** on their own devices using their own TOTP codes — there is no shared co-signing page.
+   - Each successful login creates an independent, cookie-based session — exactly like Boss's session.
+   - A live, continuously-evaluated server-side AND-gate controls all drive operations: both manager sessions must be active and their logins must have occurred within the `managerTimeout` window.
+   - If either manager logs out or their session expires while the drive is unlocked, the drive is **locked immediately** (not at the next timeout cycle).
+
+2. **Boss Role Unchanged**:
+   - Boss logs in with a single TOTP code and gets instant, independent drive access. The AND-gate applies only to the Manager pair.
+
+3. **Real-Time Manager Presence Dashboard**:
+   - Every dashboard shows the live presence state of both managers (`Active`, `Not logged in`, or `Session expired`) via the existing 1-second polling endpoint.
+   - A live join window countdown shows how long the first manager has to wait for the second (`Waiting for Manager2 — 4:12 remaining`).
+
+4. **Dynamic In-Memory QR Codes**: QR codes are generated dynamically in-memory and rendered as inline Data URIs — no filesystem writes.
+
+5. **Embedded UI Assets (`go:embed`)**: Dashboard HTML is compiled into the binary — fully self-contained, no asset-copying needed.
+
+6. **Daemon Auto-Lock Timer**: Background daemon automatically locks the drive after the auto-lock timeout elapses.
+
+7. **Platform-Independent Mock Mode**: Falls back to memory-simulated drive operations on macOS/Windows for local development.
 
 ---
 
@@ -30,17 +43,19 @@ secure_drive/
 │   │   ├── logger.go                # Log initialization
 │   │   └── audit.go                 # Structured audit trail parser
 │   ├── auth/
-│   │   ├── auth.go                  # Session & dual co-signing state engine
+│   │   ├── auth.go                  # Independent session management & live AND-gate engine
+│   │   ├── auth_test.go             # Tests: TOTP, sessions, AND-gate, join window, lockout
 │   │   ├── totp.go                  # TOTP cryptographic verifications
 │   │   ├── users.go                 # User profile load and storage
 │   │   └── setup.go                 # Startup user profile initialization
 │   ├── drive/
-│   │   ├── luks.go                  # LUKS and mounting (with simulated Mock Mode)
-│   │   └── drive.go                 # Device status check queries
+│   │   ├── luks.go                  # LUKS/mount lifecycle (AND-gate enforcement, mock mode)
+│   │   ├── drive.go                 # Device status check queries
+│   │   └── drive_test.go            # Tests: keyfile, device presence, concurrent unlocks
 │   └── server/
-│       ├── server.go                # HTTP handlers and dynamically generated QR codes
+│       ├── server.go                # HTTP handlers, presence watcher, QR codes
 │       └── templates/
-│           ├── index.html           # Glassmorphic, real-time update dashboard
+│           ├── index.html           # Glassmorphic real-time dashboard (presence + countdown)
 │           └── logs.html            # Dark-themed audit log viewer
 ├── config.yaml                      # Global daemon parameters
 ├── users.json                       # Persistent credential secrets
@@ -60,13 +75,21 @@ To run the application locally on macOS or in development environments where phy
    ```
 2. **Access the web dashboard**:
    Open [http://localhost:8080](http://localhost:8080) in your web browser.
+
 3. **TOTP Authenticator Setup**:
-   - Log in using one of the users listed in the section below.
+   - Log in using any of the users listed below.
    - Go to the **Authenticator Setup** tab.
-   - Scan the QR code shown for your user using a TOTP application (Google Authenticator, Microsoft Authenticator, 2FAS, Authy, etc.).
-4. **Test the Unlocking Actions**:
-   - Log in as the **Boss** and click the **Unlock** button. Notice that the drive status shifts to `UNLOCKED` instantly, and the auto-lock countdown bar ticks down.
-   - Log out, log in as **Manager 1**, and click **Register Co-Signature**. The approval is registered. Then log out, log in as **Manager 2** within 300 seconds, and register approval. The drive unlocks!
+   - Scan the QR code shown for your user using a TOTP application (Google Authenticator, Authy, 2FAS, etc.).
+
+4. **Test the New Unlocking Flow**:
+   - **Boss**: Log in as Boss — instant drive access with no co-signing required.
+   - **Managers (new independent flow)**:
+     - Open two browser tabs or two different browsers/devices.
+     - Log in as **Manager1** in one. The dashboard will show "Waiting for Manager2 — 4:59 remaining."
+     - Log in as **Manager2** in the other within the `managerTimeout` window.
+     - Both dashboards now show the AND-gate open (both managers Active).
+     - Either manager can click **Unlock** or **Lock**.
+     - Log out one manager — the drive locks immediately and the dashboard shows the reason.
 
 ---
 
@@ -74,21 +97,30 @@ To run the application locally on macOS or in development environments where phy
 
 During the initial run, the application auto-populates `users.json` with random TOTP secrets. Below are the default accounts:
 
-* **Boss** (Role: `Boss`) - Full Unlocking Authority
-* **Manager1** (Role: `Manager`) - Co-Signer
-* **Manager2** (Role: `Manager`) - Co-Signer
+* **Boss** (Role: `Boss`) — Full Unlocking Authority (instant single-identity)
+* **Manager1** (Role: `Manager`) — Independent session; AND-gate required for drive operations
+* **Manager2** (Role: `Manager`) — Independent session; AND-gate required for drive operations
 
-*Note: You can scan their QR codes directly from the "Authenticator Setup" tab inside the dashboard once authenticated.*
+*Note: Scan QR codes from the "Authenticator Setup" tab inside the dashboard once authenticated.*
 
 ---
 
 ## Running Automated Tests
 
-Run the test suite covering TOTP verification, session storage, and the manager approval timeout window:
-
 ```bash
 go test -v ./...
 ```
+
+Tests cover:
+- TOTP code generation and verification
+- Independent session management (create, validate, expire, remove)
+- AND-gate: open when both managers active and within join window
+- AND-gate: closed on logout, session expiry, or window timeout
+- Join window: closes and re-arms on fresh re-authentication
+- TOTP rate-limiting and lockout
+- Keyfile permission checks
+- Device presence verification
+- Concurrent unlock requests (Boss and Managers) — confirms exactly one actual mount call under the mutex
 
 ---
 
@@ -97,49 +129,31 @@ go test -v ./...
 To deploy the Secure Drive Controller as a systemd background service on your Linux server:
 
 ### Step 1: Compile the binary for Linux
-On your development machine, compile the code targeting Linux architectures:
 ```bash
 GOOS=linux GOARCH=amd64 go build -o secure-drive cmd/secure-drive/main.go
 ```
 
 ### Step 2: Install files on the target server
-Copy the compiled binary, configuration files, and `users.json` to the target server:
 ```bash
-# 1. Copy the binary to bin
 sudo cp secure-drive /usr/local/bin/
-
-# 2. Create the configuration directory
 sudo mkdir -p /etc/secure-drive
-
-# 3. Copy configuration and user files (ensure the service can read/write users.json)
 sudo cp config.yaml users.json /etc/secure-drive/
 ```
 
 ### Step 3: Set up LUKS Block Device Keyfile
-Configure the keyfile to automatically unlock the drive (defined in `config.yaml` as `/etc/secure-drive/keyfile`):
 ```bash
-# 1. Generate a secure key file
 sudo mkdir -p /etc/secure-drive/
 sudo dd if=/dev/urandom of=/etc/secure-drive/keyfile bs=1024 count=4
 sudo chmod 600 /etc/secure-drive/keyfile
-
-# 2. Add the keyfile to your LUKS device (e.g. /dev/sdb1)
 sudo cryptsetup luksAddKey /dev/sdb1 /etc/secure-drive/keyfile
 ```
 
 ### Step 4: Install and Enable the Service
 ```bash
-# 1. Copy the service unit file
 sudo cp secure-drive.service /etc/systemd/system/
-
-# 2. Reload the systemd daemon
 sudo systemctl daemon-reload
-
-# 3. Enable and start the service
 sudo systemctl enable secure-drive
 sudo systemctl start secure-drive
-
-# 4. Check the service status and logs
 sudo systemctl status secure-drive
 sudo journalctl -u secure-drive -f
 ```
@@ -148,53 +162,65 @@ sudo journalctl -u secure-drive -f
 
 ## Enhanced Security Features & Run-Time Configuration
 
-### 1. Dual-Manager Login Co-Signing Flow
-Managers (Manager 1 and Manager 2) co-sign directly on the **Login Page** before any session is created. 
-- Either manager can enter their TOTP first.
-- The system remembers the first manager's verification (for up to the configured Manager Timeout, e.g. 5 minutes) and displays a pending status showing the remaining time.
-- The second manager can then verify their TOTP. Once both are verified, the session is created under the identity `Managers`.
-- No co-signing actions are needed post-login on the dashboard.
+### 1. Independent Manager Sessions with Live AND-Gate (A1–A6)
+
+Managers log in individually with their own TOTP on the standard `/login` page. A successful login creates an independent browser session and records the login timestamp.
+
+- **A1 — Separate logins**: Each manager authenticates independently. No manager ever enters the other's credentials.
+- **A2 — Live AND-gate**: Every drive operation (lock, unlock) checks in real-time that both manager sessions are active and within the `managerTimeout` join window. The gate is checked atomically under the package-level mutex — check-and-act is never a separate race.
+- **A3 — Join window**: When the first manager logs in, a `managerTimeout`-second countdown begins. The countdown is re-armed every time a manager (re-)authenticates. Both managers' dashboards show the live countdown.
+- **A4 — Emergency lock on gate closure**: If either manager logs out or their session expires while the drive is unlocked (by managers), the drive is locked immediately. The lock reason is stored and displayed in real-time on both dashboards.
+- **A5 — Concurrent safety**: All lock/unlock/gate checks occur under the existing shared `mu` mutex. Concurrent requests are serialised; only one mount call is ever executed.
+- **A6 — Live presence visibility**: `/api/status` returns `manager1Presence`, `manager2Presence`, `managerCountdownTimeLeft`, and `lockReason`. Both managers' dashboards update every second.
 
 ### 2. Runtime Timeout Settings
-Authenticated users with unlock privileges can adjust security timeouts dynamically from the dashboard:
-- **Auto-Lock Timeout**: Range of `60` seconds (1 min) to `3600` seconds (1 hour). Prevents unauthorized access after the drive is left unattended.
-- **Session Idle Timeout**: Range of `60` seconds (1 min) to `86400` seconds (24 hours). Expired sessions require a fresh login (including TOTP validation).
-- Settings updates are written **atomically** to `config.yaml` using a temporary write-and-rename mechanism protected by a mutex, surviving daemon restarts.
-- Auto-lock daemon and HTTP sessions check these values dynamically at runtime.
+Authenticated users can adjust security timeouts dynamically:
+- **Auto-Lock Timeout**: 60–3600 seconds.
+- **Session Idle Timeout**: 60–86400 seconds.
+- Settings are written atomically to `config.yaml` via a temp-write-and-rename protected by a mutex.
 
 ### 3. Unclean Disconnect Safety & Recovery
-If the physical storage drive is forcibly removed while decrypted and mounted:
-- **Watcher Daemon**: A background thread polls every 3 seconds checking the presence of the block device. If the device disappears while the LUKS mapper is active, it logs a `CRITICAL` event: `UNEXPECTED_DEVICE_REMOVAL`.
-- **Ejection Cleanup**: The watcher runs a best-effort recovery: executing lazy unmount (`umount -l`) and clearing mapper tables (`dmsetup remove`), transitioning state to `DISCONNECTED_UNEXPECTEDLY` to warn operators.
-- **FS Checker (e2fsck)**: When the device is reconnected and unlocking is initiated, the system runs `e2fsck -p` on the mapper device. If unrecoverable filesystem errors are detected (exit code >= 4), mounting is blocked, reporting `FILESYSTEM_CHECK_FAILED`. On clean check/repair, it proceeds to mount and logs `FILESYSTEM_CHECK_PASSED` / `FILESYSTEM_REPAIRED`.
-- **Fsync & Lock Syncing**: The service executes `fsync()` on its file handles after writes. Prior to any lock action, it executes system `sync` and checks for open file handles on the mount point (using `fuser -m`). If busy, it retries 3 times before failing the lock attempt with a clear error instead of forcing it.
-
-> [!WARNING]
-> **Filesystem Risk Disclosure**: While LUKS sector writes are atomic and mitigations like `fsync` and `sync` significantly reduce corruption windows, forced hardware ejections during active operations cannot guarantee zero data loss at the ext4/filesystem journal layer. This is an inherent physical storage limitation.
+If the physical drive is forcibly removed while decrypted and mounted:
+- **Watcher Daemon** polls every 3 seconds. On unexpected removal, logs `CRITICAL: UNEXPECTED_DEVICE_REMOVAL`.
+- **Ejection Cleanup**: lazy umount + dmsetup remove, transitions state to `DISCONNECTED_UNEXPECTEDLY`.
+- **FS Checker (e2fsck)**: On reconnection, runs `e2fsck -p`. On unrecoverable errors, blocks mount and reports `FILESYSTEM_CHECK_FAILED`.
 
 ### 4. Concurrency Safety
-All functions mutating or checking drive status share a package-level mutex (`mu`). Concurrent lock/unlock requests queue safely behind the mutex, verifying status under lock to avoid duplicate `cryptsetup open` or mount calls.
+All state mutations (drive status, manager gate checks, lock/unlock) share a package-level mutex (`mu`). Concurrent requests safely serialise behind it.
 
 ### 5. TOTP Rate Limiting
-- The system tracks consecutive failed TOTP attempts per user in memory.
-- After **5 consecutive failures** within a 5-minute rolling window, the user is locked out for a **15-minute cooldown** period.
-- Lockout triggers are logged as: `USER_LOCKED_OUT user=<username> reason=too_many_failed_totp_attempts`.
-- Successful logins reset the failure counter.
+After **5 consecutive TOTP failures** in a 5-minute window, a user is locked out for **15 minutes**. Successful logins reset the counter.
 
 ### 6. Keyfile Integrity Check
-On application startup, before serving any web requests, the system checks the keyfile from `config.yaml`:
-- The keyfile must exist.
-- Permissions must be exactly `600` (or stricter, i.e., group/world must have no permissions).
-- Owner must be root or the user running the application.
-- If these checks fail, the application logs a `CRITICAL` error and refuses to start.
+On startup, the keyfile is verified to exist, have permissions `600` or stricter, and be owned by root or the running user. Failure aborts startup.
 
 ### 7. Audit Log Tamper Resistance
-After every log write and at startup, the system sets the audit log to append-only: `chattr +a audit.log`.
+The audit log is set append-only via `chattr +a` after every write (effective on ext4 Linux). This raises the bar against accidental truncation; a fully compromised root can still clear the attribute.
 
 > [!NOTE]
-> **Tamper Resistance limitations**: Setting `+a` requires an ext4-compatible filesystem supporting filesystem attributes. While this raises the bar against accidental truncation or less-privileged compromise, it is a defense-in-depth measure; a fully compromised root process can still clear the attribute and alter logs.
+> **Tamper Resistance limitation**: `chattr +a` requires ext4 support and only adds defense-in-depth — it does not replace a proper log-forwarding pipeline.
 
 ### 8. Multiple Boss Accounts Check
-If `users.json` defines more than one account with the role `Boss`, the application logs a startup warning:
-`WARNING: multiple Boss-role accounts detected — each can unlock the drive independently without co-signing`.
-This flags changes to the security architecture from a single trusted identity to a multi-boss instant-unlock model.
+If `users.json` contains more than one `Boss`-role account, the service logs a startup warning. Each Boss can unlock the drive independently; this flags any unexpected escalation.
+
+---
+
+## Audit Events Reference
+
+| Event | Meaning |
+|---|---|
+| `MANAGER1_SESSION_STARTED` | Manager1 logged in, session created |
+| `MANAGER2_SESSION_STARTED` | Manager2 logged in, session created |
+| `DUAL_MANAGER_GATE_OPEN` | Both sessions active and within join window |
+| `DUAL_MANAGER_GATE_CLOSED` | Gate dropped below two active sessions |
+| `DUAL_MANAGER_GATE_CLOSED action=auto_lock_triggered reason=<…>` | Drive locked immediately due to gate closure |
+| `ACTION_BLOCKED reason=single_manager_only` | Drive operation rejected — only one manager active |
+| `SESSION_EXPIRED` | A manager's session timed out |
+| `LOGIN_SUCCESS` | Successful login for any user |
+| `LOGIN_FAIL` | Failed login attempt |
+| `USER_LOCKED_OUT` | TOTP rate-limit triggered |
+| `LOGOUT` | Explicit logout |
+| `DRIVE_UNLOCK` | Drive decrypted and mounted |
+| `DRIVE_LOCK` | Drive unmounted and LUKS container closed |
+| `AUTO_LOCK` | Drive locked by the auto-lock daemon |
+| `UNEXPECTED_DEVICE_REMOVAL` | Physical drive removed while mounted |

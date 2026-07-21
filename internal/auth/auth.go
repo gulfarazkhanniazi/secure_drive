@@ -28,8 +28,18 @@ var (
 	sessionsMu sync.RWMutex
 	sessions   = make(map[string]*Session)
 
-	approvalMu sync.Mutex
-	approvals  = make(map[string]time.Time) // lowercase username -> approval time
+	managerLoginsMu sync.Mutex
+	managerLogins   = make(map[string]time.Time) // lowercase username -> last successful login time
+
+	lastSessionStateMu sync.Mutex
+	lastSessionState   = make(map[string]string) // lowercase username -> "active" | "logged_out" | "expired"
+
+	logoutReasonMu sync.Mutex
+	lastLogoutUser = ""
+	lastLogoutTime time.Time
+
+	GateOpenMu sync.Mutex
+	IsGateOpen = false
 
 	lockoutMu    sync.Mutex
 	userLockouts = make(map[string]*UserLoginState)
@@ -99,78 +109,164 @@ func GetUser(username string) (User, bool) {
 	return User{}, false
 }
 
-type ApprovalsStatus struct {
-	Manager1Approved bool
-	Manager1TimeLeft int
-	Manager2Approved bool
-	Manager2TimeLeft int
+func UpdateManagerLoginTime(username string) {
+	managerLoginsMu.Lock()
+	managerLogins[strings.ToLower(username)] = time.Now()
+	managerLoginsMu.Unlock()
+
+	lastSessionStateMu.Lock()
+	lastSessionState[strings.ToLower(username)] = "active"
+	lastSessionStateMu.Unlock()
 }
 
-func GetApprovalsStatus(timeoutSec int) ApprovalsStatus {
-	approvalMu.Lock()
-	defer approvalMu.Unlock()
+func RecordLogoutReason(username string) {
+	logoutReasonMu.Lock()
+	lastLogoutUser = strings.ToLower(username)
+	lastLogoutTime = time.Now()
+	logoutReasonMu.Unlock()
 
-	status := ApprovalsStatus{}
-	now := time.Now()
-	timeout := time.Duration(timeoutSec) * time.Second
+	lastSessionStateMu.Lock()
+	lastSessionState[strings.ToLower(username)] = "logged_out"
+	lastSessionStateMu.Unlock()
+}
 
-	if t, ok := approvals["manager1"]; ok {
-		elapsed := now.Sub(t)
-		if elapsed < timeout {
-			status.Manager1Approved = true
-			status.Manager1TimeLeft = int((timeout - elapsed).Seconds())
-		} else {
-			delete(approvals, "manager1")
-			logger.Audit.Log("MANAGER_APPROVAL_EXPIRED", "Manager1", "EXPIRED")
-		}
+func GetLastLogout(username string) bool {
+	logoutReasonMu.Lock()
+	defer logoutReasonMu.Unlock()
+	if lastLogoutUser == strings.ToLower(username) && time.Since(lastLogoutTime) < 5*time.Second {
+		return true
 	}
-
-	if t, ok := approvals["manager2"]; ok {
-		elapsed := now.Sub(t)
-		if elapsed < timeout {
-			status.Manager2Approved = true
-			status.Manager2TimeLeft = int((timeout - elapsed).Seconds())
-		} else {
-			delete(approvals, "manager2")
-			logger.Audit.Log("MANAGER_APPROVAL_EXPIRED", "Manager2", "EXPIRED")
-		}
-	}
-
-	return status
+	return false
 }
 
-func ClearManagerApprovals() {
-	approvalMu.Lock()
-	defer approvalMu.Unlock()
-	approvals = make(map[string]time.Time)
-}
+func IsManagerSessionActive(username string) (bool, time.Time) {
+	sessionsMu.Lock()
+	defer sessionsMu.Unlock()
 
-func RecordApproval(username string, timeoutSec int) (bool, string, error) {
-	approvalMu.Lock()
-	defer approvalMu.Unlock()
-
+	active := false
+	var maxExpiry time.Time
 	userKey := strings.ToLower(username)
-	if userKey != "manager1" && userKey != "manager2" {
-		return false, "", fmt.Errorf("invalid user for manager approval: %s", username)
+	for token, sess := range sessions {
+		if strings.ToLower(sess.Username) == userKey {
+			if time.Now().Before(sess.ExpiresAt) {
+				active = true
+				if sess.ExpiresAt.After(maxExpiry) {
+					maxExpiry = sess.ExpiresAt
+				}
+			} else {
+				// Clean up expired session
+				logger.Audit.Log("SESSION_EXPIRED", sess.Username, "SUCCESS")
+				delete(sessions, token)
+
+				lastSessionStateMu.Lock()
+				if lastSessionState[userKey] == "active" {
+					lastSessionState[userKey] = "expired"
+				}
+				lastSessionStateMu.Unlock()
+			}
+		}
+	}
+	return active, maxExpiry
+}
+
+func IsManagerGateOpen() (bool, string) {
+	m1Active, _ := IsManagerSessionActive("manager1")
+	m2Active, _ := IsManagerSessionActive("manager2")
+
+	if !m1Active && !m2Active {
+		return false, "neither_manager_active"
 	}
 
-	otherKey := "manager2"
-	if userKey == "manager2" {
-		otherKey = "manager1"
+	if !m1Active {
+		lastSessionStateMu.Lock()
+		state := lastSessionState["manager1"]
+		lastSessionStateMu.Unlock()
+		if state == "logged_out" {
+			return false, "manager1_logout"
+		} else if state == "expired" {
+			return false, "manager1_session_expired"
+		}
+		return false, "manager1_not_logged_in"
 	}
 
-	now := time.Now()
-	timeout := time.Duration(timeoutSec) * time.Second
-
-	// Check other manager approval
-	if t, ok := approvals[otherKey]; ok && now.Sub(t) < timeout {
-		approvals = make(map[string]time.Time) // Reset
-		return true, fmt.Sprintf("Both %s and %s approved. Unlocking drive.", otherKey, userKey), nil
+	if !m2Active {
+		lastSessionStateMu.Lock()
+		state := lastSessionState["manager2"]
+		lastSessionStateMu.Unlock()
+		if state == "logged_out" {
+			return false, "manager2_logout"
+		} else if state == "expired" {
+			return false, "manager2_session_expired"
+		}
+		return false, "manager2_not_logged_in"
 	}
 
-	approvals[userKey] = now
-	timeLeft := int(timeout.Seconds())
-	return false, fmt.Sprintf("%s approved. Waiting for %s within %d seconds.", username, otherKey, timeLeft), nil
+	// Both are active. Now check the login window.
+	managerLoginsMu.Lock()
+	t1 := managerLogins["manager1"]
+	t2 := managerLogins["manager2"]
+	managerLoginsMu.Unlock()
+
+	timeout := time.Duration(config.GetManagerTimeout()) * time.Second
+	diff := t1.Sub(t2)
+	if diff < 0 {
+		diff = -diff
+	}
+
+	if diff > timeout {
+		return false, "window_expired"
+	}
+
+	return true, ""
+}
+
+func GetManagerCountdownTimeLeft() int {
+	m1Active, _ := IsManagerSessionActive("manager1")
+	m2Active, _ := IsManagerSessionActive("manager2")
+
+	if m1Active == m2Active {
+		// If both are active or neither is active, no active countdown
+		return 0
+	}
+
+	managerLoginsMu.Lock()
+	t1 := managerLogins["manager1"]
+	t2 := managerLogins["manager2"]
+	managerLoginsMu.Unlock()
+
+	var start time.Time
+	if m1Active {
+		start = t1
+	} else {
+		start = t2
+	}
+
+	if start.IsZero() {
+		return 0
+	}
+
+	timeout := time.Duration(config.GetManagerTimeout()) * time.Second
+	elapsed := time.Since(start)
+	if elapsed >= timeout {
+		return 0
+	}
+	return int((timeout - elapsed).Seconds())
+}
+
+func GetManagerPresence(username string) string {
+	active, _ := IsManagerSessionActive(username)
+	if active {
+		return "Active"
+	}
+
+	lastSessionStateMu.Lock()
+	state := lastSessionState[strings.ToLower(username)]
+	lastSessionStateMu.Unlock()
+
+	if state == "expired" {
+		return "Session expired"
+	}
+	return "Not logged in"
 }
 
 func CheckLockout(username string) (bool, time.Duration) {

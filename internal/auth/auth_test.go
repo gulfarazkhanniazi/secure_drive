@@ -1,11 +1,27 @@
 package auth
 
 import (
+	"os"
 	"testing"
 	"time"
 
 	"github.com/pquerna/otp/totp"
+	"secure-drive/internal/config"
+	"secure-drive/internal/logger"
 )
+
+func TestMain(m *testing.M) {
+	// Initialize logger so Audit.Log calls don't panic
+	logger.InitLogger(os.DevNull)
+
+	// Set default config for GetManagerTimeout and GetSessionTimeout
+	config.AppConfig = &config.Config{}
+	config.AppConfig.Security.ManagerTimeout = 300
+	config.AppConfig.Security.SessionTimeout = 900
+	config.AppConfig.Security.AutoLockTimeout = 600
+
+	os.Exit(m.Run())
+}
 
 func TestTOTPVerification(t *testing.T) {
 	// Generate a secret
@@ -50,45 +66,119 @@ func TestSessionManagement(t *testing.T) {
 }
 
 func TestManagerAuthorizationEngine(t *testing.T) {
-	timeout := 2 // 2 seconds
+	// Clean sessions and logins
+	sessionsMu.Lock()
+	sessions = make(map[string]*Session)
+	sessionsMu.Unlock()
 
-	// Reset approvals
-	ClearManagerApprovals()
+	managerLoginsMu.Lock()
+	managerLogins = make(map[string]time.Time)
+	managerLoginsMu.Unlock()
 
-	// 1. Manager 1 approves
-	unlocked, msg, err := RecordApproval("Manager1", timeout)
-	if err != nil {
-		t.Fatalf("RecordApproval failed: %v", err)
-	}
-	if unlocked {
-		t.Errorf("RecordApproval unlocked the drive with only one manager")
-	}
-	if msg == "" {
-		t.Errorf("Expected status message from RecordApproval")
-	}
+	lastSessionStateMu.Lock()
+	lastSessionState = make(map[string]string)
+	lastSessionStateMu.Unlock()
 
-	// 2. Manager 2 approves within timeout
-	unlocked, _, err = RecordApproval("Manager2", timeout)
-	if err != nil {
-		t.Fatalf("RecordApproval failed: %v", err)
+	// 1. Initially, gate should be closed
+	open, reason := IsManagerGateOpen()
+	if open {
+		t.Errorf("gate should be closed initially")
 	}
-	if !unlocked {
-		t.Errorf("RecordApproval failed to unlock with both managers approved")
+	if reason != "neither_manager_active" {
+		t.Errorf("expected neither_manager_active, got %s", reason)
 	}
 
-	// 3. Test timeout: Manager 1 approves, wait 3 seconds, Manager 2 approves
-	ClearManagerApprovals()
-	unlocked, _, _ = RecordApproval("Manager1", timeout)
-	if unlocked {
-		t.Errorf("Unlock triggered prematurely")
+	// 2. Log in Manager1
+	token1 := CreateSession("Manager1", "Manager")
+	UpdateManagerLoginTime("Manager1")
+
+	// Gate should still be closed, waiting for Manager2
+	open, reason = IsManagerGateOpen()
+	if open {
+		t.Errorf("gate should be closed with only Manager1 active")
+	}
+	if reason != "manager2_not_logged_in" {
+		t.Errorf("expected manager2_not_logged_in, got %s", reason)
 	}
 
-	time.Sleep(3 * time.Second)
+	// 3. Log in Manager2
+	token2 := CreateSession("Manager2", "Manager")
+	UpdateManagerLoginTime("Manager2")
 
-	unlocked, _, _ = RecordApproval("Manager2", timeout)
-	if unlocked {
-		t.Errorf("Drive unlocked after approval timeout had expired")
+	// Gate should now be open
+	open, reason = IsManagerGateOpen()
+	if !open {
+		t.Errorf("gate should be open with both active: %s", reason)
 	}
+
+	// 4. Test countdown time left
+	// Since both are active, countdown should be 0
+	left := GetManagerCountdownTimeLeft()
+	if left != 0 {
+		t.Errorf("expected countdown time left to be 0 when both are active, got %d", left)
+	}
+
+	// 5. Test logout of Manager1 closes the gate
+	RecordLogoutReason("Manager1")
+	RemoveSession(token1)
+
+	open, reason = IsManagerGateOpen()
+	if open {
+		t.Errorf("gate should be closed after Manager1 logs out")
+	}
+	if reason != "manager1_logout" {
+		t.Errorf("expected manager1_logout, got %s", reason)
+	}
+
+	// Cleanup Manager2 too
+	RecordLogoutReason("Manager2")
+	RemoveSession(token2)
+}
+
+func TestManagerJoinWindowTimeout(t *testing.T) {
+	// Clean sessions and logins
+	sessionsMu.Lock()
+	sessions = make(map[string]*Session)
+	sessionsMu.Unlock()
+
+	managerLoginsMu.Lock()
+	managerLogins = make(map[string]time.Time)
+	managerLoginsMu.Unlock()
+
+	// 1. Log in Manager1
+	token1 := CreateSession("Manager1", "Manager")
+	UpdateManagerLoginTime("Manager1")
+
+	// Set Manager1's login time to 400 seconds ago (exceeding 300s timeout)
+	managerLoginsMu.Lock()
+	managerLogins["manager1"] = time.Now().Add(-400 * time.Second)
+	managerLoginsMu.Unlock()
+
+	// 2. Log in Manager2 now
+	token2 := CreateSession("Manager2", "Manager")
+	UpdateManagerLoginTime("Manager2")
+
+	// Gate should be closed due to window expiration
+	open, reason := IsManagerGateOpen()
+	if open {
+		t.Errorf("gate should be closed due to window expiration")
+	}
+	if reason != "window_expired" {
+		t.Errorf("expected window_expired, got %s", reason)
+	}
+
+	// 3. Re-authenticate Manager1
+	UpdateManagerLoginTime("Manager1")
+
+	// Gate should open now
+	open, reason = IsManagerGateOpen()
+	if !open {
+		t.Errorf("gate should be open after Manager1 re-authenticates, got: %s", reason)
+	}
+
+	// Cleanup
+	RemoveSession(token1)
+	RemoveSession(token2)
 }
 
 func TestTOTPLockout(t *testing.T) {

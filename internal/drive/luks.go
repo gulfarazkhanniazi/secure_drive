@@ -11,6 +11,7 @@ import (
 	"syscall"
 	"time"
 
+	"secure-drive/internal/auth"
 	"secure-drive/internal/config"
 	"secure-drive/internal/logger"
 )
@@ -25,8 +26,67 @@ var (
 	mockFsckFail             = false
 	disconnectedUnexpectedly = false
 
+	unlockedBy   string
+	unlockedByMu sync.Mutex
+
+	lockReason   string
+	lockReasonMu sync.Mutex
+
+	mockUnlockCallsCount     int
+
 	ErrDeviceNotPresent = fmt.Errorf("DEVICE_NOT_PRESENT")
 )
+
+func GetMockUnlockCallsCount() int {
+	mu.Lock()
+	defer mu.Unlock()
+	return mockUnlockCallsCount
+}
+
+func ResetMockUnlockCallsCount() {
+	mu.Lock()
+	defer mu.Unlock()
+	mockUnlockCallsCount = 0
+}
+
+func GetUnlockedBy() string {
+	unlockedByMu.Lock()
+	defer unlockedByMu.Unlock()
+	return unlockedBy
+}
+
+func SetUnlockedBy(val string) {
+	unlockedByMu.Lock()
+	defer unlockedByMu.Unlock()
+	unlockedBy = val
+}
+
+func GetLockReason() string {
+	lockReasonMu.Lock()
+	defer lockReasonMu.Unlock()
+	return lockReason
+}
+
+func SetLockReason(val string) {
+	lockReasonMu.Lock()
+	defer lockReasonMu.Unlock()
+	lockReason = val
+}
+
+func FormatLockReason(reason string) string {
+	switch reason {
+	case "manager1_logout":
+		return "Locked automatically — Manager1 logged out"
+	case "manager2_logout":
+		return "Locked automatically — Manager2 logged out"
+	case "manager1_session_expired":
+		return "Locked automatically — Manager1 session expired"
+	case "manager2_session_expired":
+		return "Locked automatically — Manager2 session expired"
+	default:
+		return ""
+	}
+}
 
 func IsMockMode() bool {
 	if os.Getenv("MOCK_MODE") == "true" {
@@ -137,13 +197,21 @@ func isMountPointBusy(mountPoint string) (bool, string) {
 	return false, ""
 }
 
-func UnlockDrive(cfg *config.Config) error {
+func UnlockDrive(cfg *config.Config, username, userRole string) error {
 	mu.Lock()
 	defer mu.Unlock()
 
 	// Verify device exists (Section 8 check)
 	if err := checkDevicePresence(cfg); err != nil {
 		return err
+	}
+
+	if strings.ToLower(userRole) == "manager" {
+		open, _ := auth.IsManagerGateOpen()
+		if !open {
+			logger.Audit.Log("ACTION_BLOCKED reason=single_manager_only", username, "FAILURE")
+			return fmt.Errorf("Waiting for the other manager to log in")
+		}
 	}
 
 	if isUnlockedNoLock(cfg) {
@@ -163,6 +231,9 @@ func UnlockDrive(cfg *config.Config) error {
 		mockUnlocked = true
 		mockMounted = true
 		unlockTime = time.Now()
+		unlockedBy = userRole
+		lockReason = ""
+		mockUnlockCallsCount++
 		return nil
 	}
 
@@ -217,16 +288,26 @@ func UnlockDrive(cfg *config.Config) error {
 	}
 
 	unlockTime = time.Now()
+	unlockedBy = userRole
+	lockReason = ""
 	return nil
 }
 
-func LockDrive(cfg *config.Config) error {
+func LockDrive(cfg *config.Config, username, userRole string) error {
 	mu.Lock()
 	defer mu.Unlock()
 
 	// Verify device exists (Section 8 check)
 	if err := checkDevicePresence(cfg); err != nil {
 		return err
+	}
+
+	if strings.ToLower(userRole) == "manager" {
+		open, _ := auth.IsManagerGateOpen()
+		if !open {
+			logger.Audit.Log("ACTION_BLOCKED reason=single_manager_only", username, "FAILURE")
+			return fmt.Errorf("Waiting for the other manager to log in")
+		}
 	}
 
 	// Write safety mitigations (Section 3b)
@@ -254,6 +335,7 @@ func LockDrive(cfg *config.Config) error {
 		mockUnlocked = false
 		mockMounted = false
 		unlockTime = time.Time{}
+		unlockedBy = ""
 		return nil
 	}
 
@@ -272,6 +354,7 @@ func LockDrive(cfg *config.Config) error {
 	}
 
 	unlockTime = time.Time{}
+	unlockedBy = ""
 	return nil
 }
 
@@ -313,7 +396,7 @@ func StartAutoLockDaemon(cfg *config.Config) {
 			timeout := time.Duration(config.GetAutoLockTimeout()) * time.Second
 			if time.Since(ut) >= timeout {
 				log.Println("[AUTO-LOCK] Drive has been unlocked longer than timeout. Locking now...")
-				err := LockDrive(cfg)
+				err := LockDrive(cfg, "SYSTEM", "SYSTEM")
 				if err != nil {
 					log.Printf("[AUTO-LOCK] Error locking drive: %v\n", err)
 					logger.Audit.Log("AUTO_LOCK_FAIL", "SYSTEM", "FAILURE")
@@ -345,6 +428,7 @@ func StartDeviceWatcher(cfg *config.Config) {
 					mockUnlocked = false
 					mockMounted = false
 					unlockTime = time.Time{}
+					unlockedBy = ""
 					mu.Unlock()
 
 					log.Printf("CRITICAL: [MOCK] UNEXPECTED_DEVICE_REMOVAL device=%s mapper_was_active=true\n", cfg.Drive.Device)
@@ -374,6 +458,7 @@ func StartDeviceWatcher(cfg *config.Config) {
 			if mapperActive && !deviceExists && !alreadyLogged {
 				mu.Lock()
 				disconnectedUnexpectedly = true
+				unlockedBy = ""
 				mu.Unlock()
 
 				log.Printf("CRITICAL: UNEXPECTED_DEVICE_REMOVAL device=%s mapper_was_active=true\n", cfg.Drive.Device)

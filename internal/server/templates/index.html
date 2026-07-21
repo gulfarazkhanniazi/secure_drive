@@ -559,26 +559,7 @@
                 </div>
             {{end}}
 
-            <!-- CO-SIGNING STATUS DISPLAY (FOR MANAGERS) -->
-            {{if or .Manager1Approved .Manager2Approved}}
-            <div style="margin-bottom: 25px;">
-                <label>Co-Signing Verification</label>
-                <div class="approval-list">
-                    <div class="approval-item {{if .Manager1Approved}}approved{{else}}pending{{end}}">
-                        <span class="approval-indicator"></span>
-                        <span class="approval-text">
-                            {{if .Manager1Approved}}Manager 1: Verified ({{.Manager1TimeLeft}}s left){{else}}Manager 1: Pending{{end}}
-                        </span>
-                    </div>
-                    <div class="approval-item {{if .Manager2Approved}}approved{{else}}pending{{end}}">
-                        <span class="approval-indicator"></span>
-                        <span class="approval-text">
-                            {{if .Manager2Approved}}Manager 2: Verified ({{.Manager2TimeLeft}}s left){{else}}Manager 2: Pending{{end}}
-                        </span>
-                    </div>
-                </div>
-            </div>
-            {{end}}
+
 
             <form action="/login" method="POST">
                 <div class="form-group">
@@ -649,6 +630,10 @@
                     <span class="info-value">{{.MountPoint}}</span>
                 </div>
 
+                <div id="drive-lock-reason-section" style="margin-top: 15px; {{if or (ne .Status `LOCKED`) (eq .LockReason ``)}}display: none;{{end}}color: var(--accent-danger); font-weight: 500; font-size: 0.95rem;">
+                    <span>Reason: </span><strong id="drive-lock-reason">{{.LockReason}}</strong>
+                </div>
+
                 <!-- AUTO LOCK SECTION -->
                 <div id="auto-lock-section" style="{{if ne .Status `UNLOCKED`}}display: none;{{end}}">
                     <div class="section-title">Auto-Lock Shutdown</div>
@@ -682,6 +667,31 @@
                         <button type="submit" class="btn btn-danger">🔒 Secure & Lock Drive</button>
                     </form>
                 {{end}}
+            </div>
+        </div>
+
+        <!-- MANAGER PRESENCE CARD -->
+        <div class="card" style="margin-top: 25px;" id="manager-presence-card">
+            <h2 style="font-size:1.4rem; border-bottom: 1px solid var(--border-color); padding-bottom: 15px; margin-bottom: 20px;">Manager Presence & Gate</h2>
+            <div class="approval-list">
+                <div class="approval-item {{if eq .Manager1Presence `Active`}}approved{{else}}pending{{end}}" id="presence-m1-item">
+                    <span class="approval-indicator" id="presence-m1-dot" style="{{if eq .Manager1Presence `Active`}}background-color: var(--accent-success); box-shadow: 0 0 8px var(--accent-success);{{else if eq .Manager1Presence `Session expired`}}background-color: var(--accent-danger); box-shadow: 0 0 8px var(--accent-danger);{{else}}background-color: rgba(255, 255, 255, 0.15);{{end}}"></span>
+                    <span class="approval-text" id="presence-m1-text">Manager 1: {{.Manager1Presence}}</span>
+                </div>
+                <div class="approval-item {{if eq .Manager2Presence `Active`}}approved{{else}}pending{{end}}" id="presence-m2-item">
+                    <span class="approval-indicator" id="presence-m2-dot" style="{{if eq .Manager2Presence `Active`}}background-color: var(--accent-success); box-shadow: 0 0 8px var(--accent-success);{{else if eq .Manager2Presence `Session expired`}}background-color: var(--accent-danger); box-shadow: 0 0 8px var(--accent-danger);{{else}}background-color: rgba(255, 255, 255, 0.15);{{end}}"></span>
+                    <span class="approval-text" id="presence-m2-text">Manager 2: {{.Manager2Presence}}</span>
+                </div>
+            </div>
+
+            <div id="manager-window-section" style="margin-top: 20px; {{if le .ManagerCountdownTimeLeft 0}}display: none;{{end}}">
+                <div class="section-title" id="manager-window-title">Waiting for Manager...</div>
+                <div class="countdown-container">
+                    <div class="countdown-time" id="manager-window-countdown">00:00</div>
+                    <div class="progress-bar-container">
+                        <div class="progress-bar" id="manager-window-progress"></div>
+                    </div>
+                </div>
             </div>
         </div>
 
@@ -818,6 +828,84 @@
                                 }
                             } else {
                                 if (autoLockSection) autoLockSection.style.display = "none";
+                            }
+
+                            // Update Lock Reason
+                            const lockReasonEl = document.getElementById("drive-lock-reason");
+                            const lockReasonSection = document.getElementById("drive-lock-reason-section");
+                            if (data.lockReason && data.status === "LOCKED") {
+                                if (lockReasonSection) lockReasonSection.style.display = "block";
+                                if (lockReasonEl) lockReasonEl.textContent = data.lockReason;
+                            } else {
+                                if (lockReasonSection) lockReasonSection.style.display = "none";
+                            }
+
+                            // Update Manager Presence
+                            const presenceM1Text = document.getElementById("presence-m1-text");
+                            const presenceM1Dot = document.getElementById("presence-m1-dot");
+                            const presenceM1Item = document.getElementById("presence-m1-item");
+                            if (presenceM1Text && presenceM1Dot && presenceM1Item) {
+                                presenceM1Text.textContent = `Manager 1: ${data.manager1Presence}`;
+                                if (data.manager1Presence === "Active") {
+                                    presenceM1Item.className = "approval-item approved";
+                                    presenceM1Dot.style.backgroundColor = "var(--accent-success)";
+                                    presenceM1Dot.style.boxShadow = "0 0 8px var(--accent-success)";
+                                } else if (data.manager1Presence === "Session expired") {
+                                    presenceM1Item.className = "approval-item pending";
+                                    presenceM1Dot.style.backgroundColor = "var(--accent-danger)";
+                                    presenceM1Dot.style.boxShadow = "0 0 8px var(--accent-danger)";
+                                } else {
+                                    presenceM1Item.className = "approval-item pending";
+                                    presenceM1Dot.style.backgroundColor = "rgba(255, 255, 255, 0.15)";
+                                    presenceM1Dot.style.boxShadow = "none";
+                                }
+                            }
+
+                            const presenceM2Text = document.getElementById("presence-m2-text");
+                            const presenceM2Dot = document.getElementById("presence-m2-dot");
+                            const presenceM2Item = document.getElementById("presence-m2-item");
+                            if (presenceM2Text && presenceM2Dot && presenceM2Item) {
+                                presenceM2Text.textContent = `Manager 2: ${data.manager2Presence}`;
+                                if (data.manager2Presence === "Active") {
+                                    presenceM2Item.className = "approval-item approved";
+                                    presenceM2Dot.style.backgroundColor = "var(--accent-success)";
+                                    presenceM2Dot.style.boxShadow = "0 0 8px var(--accent-success)";
+                                } else if (data.manager2Presence === "Session expired") {
+                                    presenceM2Item.className = "approval-item pending";
+                                    presenceM2Dot.style.backgroundColor = "var(--accent-danger)";
+                                    presenceM2Dot.style.boxShadow = "0 0 8px var(--accent-danger)";
+                                } else {
+                                    presenceM2Item.className = "approval-item pending";
+                                    presenceM2Dot.style.backgroundColor = "rgba(255, 255, 255, 0.15)";
+                                    presenceM2Dot.style.boxShadow = "none";
+                                }
+                            }
+
+                            // Update Join Window Countdown
+                            const managerWindowSection = document.getElementById("manager-window-section");
+                            const managerWindowCountdown = document.getElementById("manager-window-countdown");
+                            const managerWindowProgress = document.getElementById("manager-window-progress");
+                            const managerWindowTitle = document.getElementById("manager-window-title");
+
+                            if (data.managerCountdownTimeLeft > 0) {
+                                if (managerWindowSection) managerWindowSection.style.display = "block";
+                                const mins = Math.floor(data.managerCountdownTimeLeft / 60);
+                                const secs = data.managerCountdownTimeLeft % 60;
+                                const timeStr = `${mins}:${secs.toString().padStart(2, '0')}`;
+                                
+                                if (managerWindowCountdown) {
+                                    managerWindowCountdown.textContent = timeStr;
+                                }
+                                if (managerWindowProgress) {
+                                    const percent = (data.managerCountdownTimeLeft / data.managerTimeout) * 100;
+                                    managerWindowProgress.style.width = `${percent}%`;
+                                }
+                                if (managerWindowTitle) {
+                                    const waitingFor = data.manager1Presence === "Active" ? "Manager2" : "Manager1";
+                                    managerWindowTitle.textContent = `Waiting for ${waitingFor} — ${timeStr} remaining`;
+                                }
+                            } else {
+                                if (managerWindowSection) managerWindowSection.style.display = "none";
                             }
                             
                             // If lock state changed and action buttons need toggling, reload page to refresh session state.

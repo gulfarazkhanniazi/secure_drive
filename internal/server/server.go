@@ -24,27 +24,32 @@ import (
 var templatesFS embed.FS
 
 type DashboardData struct {
-	Title            string
-	Status           string
-	Device           string
-	Mapper           string
-	MountPoint       string
-	LoggedIn         bool
-	Username         string
-	Role             string
-	Manager1Approved bool
-	Manager1TimeLeft int
-	Manager2Approved bool
-	Manager2TimeLeft int
-	AutoLockTimeLeft int
-	AutoLockTimeout  int
-	SessionTimeout   int
-	BossQR           string
-	Manager1QR       string
-	Manager2QR       string
-	Error            string
-	Success          string
-	Logs             []logger.AuditEntry
+	Title                    string
+	Status                   string
+	Device                   string
+	Mapper                   string
+	MountPoint               string
+	LoggedIn                 bool
+	Username                 string
+	Role                     string
+	Manager1Approved         bool
+	Manager1TimeLeft         int
+	Manager2Approved         bool
+	Manager2TimeLeft         int
+	AutoLockTimeLeft         int
+	AutoLockTimeout          int
+	SessionTimeout           int
+	BossQR                   string
+	Manager1QR               string
+	Manager2QR               string
+	Error                    string
+	Success                  string
+	Logs                     []logger.AuditEntry
+	Manager1Presence         string
+	Manager2Presence         string
+	ManagerCountdownTimeLeft int
+	ManagerTimeout           int
+	LockReason               string
 }
 
 var tmpl *template.Template
@@ -65,8 +70,63 @@ func getQRCodeBase64(url string) (string, error) {
 	return "data:image/png;base64," + base64.StdEncoding.EncodeToString(png), nil
 }
 
+func startManagerPresenceWatcher(cfg *config.Config) {
+	go func() {
+		ticker := time.NewTicker(1 * time.Second)
+		defer ticker.Stop()
+
+		for range ticker.C {
+			open, reason := auth.IsManagerGateOpen()
+
+			auth.GateOpenMu.Lock()
+			wasOpen := auth.IsGateOpen
+			if open != wasOpen {
+				auth.IsGateOpen = open
+				auth.GateOpenMu.Unlock()
+
+				if open {
+					logger.Audit.Log("DUAL_MANAGER_GATE_OPEN", "SYSTEM", "SUCCESS")
+				} else {
+					logger.Audit.Log("DUAL_MANAGER_GATE_CLOSED", "SYSTEM", "SUCCESS")
+
+					// Emergency Auto-Lock on gate closure (A4)
+					if drive.IsUnlocked(cfg) && drive.GetUnlockedBy() == "Manager" {
+						log.Printf("[GATE-WATCHER] AND-gate closed because of: %s. Locking drive...", reason)
+						err := drive.LockDrive(cfg, "SYSTEM", "SYSTEM")
+						if err != nil {
+							log.Printf("[GATE-WATCHER] Error locking drive: %v", err)
+							logger.Audit.Log("AUTO_LOCK_FAIL", "SYSTEM", "FAILURE")
+						} else {
+							logger.Audit.Log("DUAL_MANAGER_GATE_CLOSED action=auto_lock_triggered reason="+reason, "SYSTEM", "SUCCESS")
+							drive.SetLockReason(drive.FormatLockReason(reason))
+						}
+					}
+				}
+			} else {
+				auth.GateOpenMu.Unlock()
+
+				// If gate is not open, but drive is currently unlocked by Managers, we must enforce lock.
+				if !open && drive.IsUnlocked(cfg) && drive.GetUnlockedBy() == "Manager" {
+					log.Printf("[GATE-WATCHER] Gate is closed and drive is unlocked by Managers. Forcing lock...")
+					err := drive.LockDrive(cfg, "SYSTEM", "SYSTEM")
+					if err != nil {
+						log.Printf("[GATE-WATCHER] Error locking drive: %v", err)
+						logger.Audit.Log("AUTO_LOCK_FAIL", "SYSTEM", "FAILURE")
+					} else {
+						logger.Audit.Log("DUAL_MANAGER_GATE_CLOSED action=auto_lock_triggered reason="+reason, "SYSTEM", "SUCCESS")
+						drive.SetLockReason(drive.FormatLockReason(reason))
+					}
+				}
+			}
+		}
+	}()
+}
+
 func StartServer(cfg *config.Config) {
 	var err error
+
+	// Start manager presence watcher
+	startManagerPresenceWatcher(cfg)
 
 	// Parse templates from embedded FS
 	tmpl, err = template.ParseFS(templatesFS, "templates/index.html", "templates/logs.html")
@@ -107,9 +167,6 @@ func StartServer(cfg *config.Config) {
 			}
 		}
 
-		// Get manager approvals (for dashboard information)
-		appr := auth.GetApprovalsStatus(config.GetManagerTimeout())
-
 		// Generate Base64 QR codes dynamically
 		bossURL := auth.GenerateOTPURL(auth.AppUsers.Boss.Secret, auth.AppUsers.Boss.Account, auth.AppUsers.Boss.Issuer)
 		bossQR, _ := getQRCodeBase64(bossURL)
@@ -127,27 +184,28 @@ func StartServer(cfg *config.Config) {
 		}
 
 		data := DashboardData{
-			Title:            "Secure Drive Controller",
-			Status:           statusStr,
-			Device:           cfg.Drive.Device,
-			Mapper:           cfg.Drive.Mapper,
-			MountPoint:       cfg.Drive.MountPoint,
-			LoggedIn:         true,
-			Username:         sess.Username,
-			Role:             sess.Role,
-			Manager1Approved: appr.Manager1Approved,
-			Manager1TimeLeft: appr.Manager1TimeLeft,
-			Manager2Approved: appr.Manager2Approved,
-			Manager2TimeLeft: appr.Manager2TimeLeft,
-			AutoLockTimeLeft: autoLockTimeLeft,
-			AutoLockTimeout:  config.GetAutoLockTimeout(),
-			SessionTimeout:   config.GetSessionTimeout(),
-			BossQR:           bossQR,
-			Manager1QR:       m1QR,
-			Manager2QR:       m2QR,
-			Error:            r.URL.Query().Get("error"),
-			Success:          r.URL.Query().Get("success"),
-			Logs:             logs,
+			Title:                    "Secure Drive Controller",
+			Status:                   statusStr,
+			Device:                   cfg.Drive.Device,
+			Mapper:                   cfg.Drive.Mapper,
+			MountPoint:               cfg.Drive.MountPoint,
+			LoggedIn:                 true,
+			Username:                 sess.Username,
+			Role:                     sess.Role,
+			AutoLockTimeLeft:         autoLockTimeLeft,
+			AutoLockTimeout:          config.GetAutoLockTimeout(),
+			SessionTimeout:           config.GetSessionTimeout(),
+			BossQR:                   bossQR,
+			Manager1QR:               m1QR,
+			Manager2QR:               m2QR,
+			Error:                    r.URL.Query().Get("error"),
+			Success:                  r.URL.Query().Get("success"),
+			Logs:                     logs,
+			Manager1Presence:         auth.GetManagerPresence("manager1"),
+			Manager2Presence:         auth.GetManagerPresence("manager2"),
+			ManagerCountdownTimeLeft: auth.GetManagerCountdownTimeLeft(),
+			ManagerTimeout:           config.GetManagerTimeout(),
+			LockReason:               drive.GetLockReason(),
 		}
 
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -165,16 +223,15 @@ func StartServer(cfg *config.Config) {
 		}
 
 		if r.Method == http.MethodGet {
-			appr := auth.GetApprovalsStatus(config.GetManagerTimeout())
 			data := DashboardData{
-				Title:            "Login - Secure Drive Controller",
-				LoggedIn:         false,
-				Manager1Approved: appr.Manager1Approved,
-				Manager1TimeLeft: appr.Manager1TimeLeft,
-				Manager2Approved: appr.Manager2Approved,
-				Manager2TimeLeft: appr.Manager2TimeLeft,
-				Error:            r.URL.Query().Get("error"),
-				Success:          r.URL.Query().Get("success"),
+				Title:                    "Login - Secure Drive Controller",
+				LoggedIn:                 false,
+				Error:                    r.URL.Query().Get("error"),
+				Success:                  r.URL.Query().Get("success"),
+				Manager1Presence:         auth.GetManagerPresence("manager1"),
+				Manager2Presence:         auth.GetManagerPresence("manager2"),
+				ManagerCountdownTimeLeft: auth.GetManagerCountdownTimeLeft(),
+				ManagerTimeout:           config.GetManagerTimeout(),
 			}
 			w.Header().Set("Content-Type", "text/html; charset=utf-8")
 			if err := tmpl.ExecuteTemplate(w, "index.html", data); err != nil {
@@ -221,48 +278,32 @@ func StartServer(cfg *config.Config) {
 			// Reset failed attempts on success
 			auth.ResetFailedAttempts(username)
 
-			// Handle Boss Login (Immediate)
-			if strings.ToLower(username) == "boss" {
-				token := auth.CreateSession(username, user.Role)
-				cookie := &http.Cookie{
-					Name:     "session_token",
-					Value:    token,
-					Expires:  time.Now().Add(time.Duration(config.GetSessionTimeout()) * time.Second),
-					HttpOnly: true,
-					Path:     "/",
-				}
-				http.SetCookie(w, cookie)
+			// Handle successful Login (Immediate session creation for Boss & Managers)
+			token := auth.CreateSession(username, user.Role)
+			cookie := &http.Cookie{
+				Name:     "session_token",
+				Value:    token,
+				Expires:  time.Now().Add(time.Duration(config.GetSessionTimeout()) * time.Second),
+				HttpOnly: true,
+				Path:     "/",
+			}
+			http.SetCookie(w, cookie)
+
+			roleLower := strings.ToLower(user.Role)
+			usernameLower := strings.ToLower(username)
+
+			if roleLower == "boss" {
 				logger.Audit.Log("LOGIN_SUCCESS", username, "SUCCESS")
-				http.Redirect(w, r, "/", http.StatusSeeOther)
-				return
+			} else if usernameLower == "manager1" {
+				logger.Audit.Log("MANAGER1_SESSION_STARTED", "Manager1", "SUCCESS")
+				auth.UpdateManagerLoginTime(username)
+			} else if usernameLower == "manager2" {
+				logger.Audit.Log("MANAGER2_SESSION_STARTED", "Manager2", "SUCCESS")
+				auth.UpdateManagerLoginTime(username)
 			}
 
-			// Handle Manager Co-Signing Login Flow (Section 1)
-			unlocked, msg, err := auth.RecordApproval(username, config.GetManagerTimeout())
-			if err != nil {
-				http.Redirect(w, r, fmt.Sprintf("/login?error=%v", err), http.StatusSeeOther)
-				return
-			}
-
-			if unlocked {
-				// Both managers approved! Clear approvals state and log them in
-				auth.ClearManagerApprovals()
-				token := auth.CreateSession("Managers", "Manager")
-				cookie := &http.Cookie{
-					Name:     "session_token",
-					Value:    token,
-					Expires:  time.Now().Add(time.Duration(config.GetSessionTimeout()) * time.Second),
-					HttpOnly: true,
-					Path:     "/",
-				}
-				http.SetCookie(w, cookie)
-				logger.Audit.Log("LOGIN_SUCCESS", "Managers", "SUCCESS")
-				http.Redirect(w, r, "/", http.StatusSeeOther)
-				return
-			}
-
-			// First manager verified, wait for second manager
-			http.Redirect(w, r, fmt.Sprintf("/login?success=%s", msg), http.StatusSeeOther)
+			http.Redirect(w, r, "/", http.StatusSeeOther)
+			return
 		}
 	})
 
@@ -309,6 +350,13 @@ func StartServer(cfg *config.Config) {
 	http.HandleFunc("/logout", func(w http.ResponseWriter, r *http.Request) {
 		cookie, err := r.Cookie("session_token")
 		if err == nil {
+			sess, ok := auth.ValidateSessionToken(cookie.Value)
+			if ok {
+				auth.RecordLogoutReason(sess.Username)
+				logger.Audit.Log("LOGOUT", sess.Username, "SUCCESS")
+			} else {
+				logger.Audit.Log("LOGOUT", "USER", "SUCCESS")
+			}
 			auth.RemoveSession(cookie.Value)
 			http.SetCookie(w, &http.Cookie{
 				Name:     "session_token",
@@ -318,7 +366,6 @@ func StartServer(cfg *config.Config) {
 				HttpOnly: true,
 				Path:     "/",
 			})
-			logger.Audit.Log("LOGOUT", "USER", "SUCCESS")
 		}
 		http.Redirect(w, r, "/login", http.StatusSeeOther)
 	})
@@ -343,7 +390,7 @@ func StartServer(cfg *config.Config) {
 			return
 		}
 
-		err := drive.UnlockDrive(cfg)
+		err := drive.UnlockDrive(cfg, sess.Username, sess.Role)
 		if err != nil {
 			log.Printf("Error unlocking drive: %v", err)
 			logger.Audit.Log("DRIVE_UNLOCK", sess.Username, "FAILURE")
@@ -368,7 +415,7 @@ func StartServer(cfg *config.Config) {
 			return
 		}
 
-		err := drive.LockDrive(cfg)
+		err := drive.LockDrive(cfg, sess.Username, sess.Role)
 		if err != nil {
 			log.Printf("Error locking drive: %v", err)
 			logger.Audit.Log("DRIVE_LOCK", sess.Username, "FAILURE")
@@ -410,23 +457,21 @@ func StartServer(cfg *config.Config) {
 			}
 		}
 
-		appr := auth.GetApprovalsStatus(config.GetManagerTimeout())
-
 		response := map[string]interface{}{
-			"status":           statusStr,
-			"device":           cfg.Drive.Device,
-			"mapper":           cfg.Drive.Mapper,
-			"mountPoint":       cfg.Drive.MountPoint,
-			"manager1Approved": appr.Manager1Approved,
-			"manager1TimeLeft": appr.Manager1TimeLeft,
-			"manager2Approved": appr.Manager2Approved,
-			"manager2TimeLeft": appr.Manager2TimeLeft,
-			"autoLockTimeLeft": autoLockTimeLeft,
-			"currentUser":      sess.Username,
-			"currentRole":      sess.Role,
-			"autoLockTimeout":  config.GetAutoLockTimeout(),
-			"sessionTimeout":   config.GetSessionTimeout(),
-			"managerTimeout":   config.GetManagerTimeout(),
+			"status":                   statusStr,
+			"device":                   cfg.Drive.Device,
+			"mapper":                   cfg.Drive.Mapper,
+			"mountPoint":               cfg.Drive.MountPoint,
+			"autoLockTimeLeft":         autoLockTimeLeft,
+			"currentUser":              sess.Username,
+			"currentRole":              sess.Role,
+			"autoLockTimeout":          config.GetAutoLockTimeout(),
+			"sessionTimeout":           config.GetSessionTimeout(),
+			"managerTimeout":           config.GetManagerTimeout(),
+			"manager1Presence":         auth.GetManagerPresence("manager1"),
+			"manager2Presence":         auth.GetManagerPresence("manager2"),
+			"managerCountdownTimeLeft": auth.GetManagerCountdownTimeLeft(),
+			"lockReason":               drive.GetLockReason(),
 		}
 
 		w.Header().Set("Content-Type", "application/json")
