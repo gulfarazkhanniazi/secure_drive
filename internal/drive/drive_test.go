@@ -14,6 +14,9 @@ func TestMain(m *testing.M) {
 	// Initialize logger so Audit.Log calls don't panic
 	logger.InitLogger(os.DevNull)
 
+	// Redirect config writes to /dev/null so no stale config.yaml appears in test dirs
+	config.ConfigPath = os.DevNull
+
 	// Set default config for GetManagerTimeout
 	config.AppConfig = &config.Config{}
 	config.AppConfig.Security.ManagerTimeout = 300

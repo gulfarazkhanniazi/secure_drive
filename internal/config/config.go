@@ -9,8 +9,9 @@ import (
 )
 
 var (
-	AppConfig *Config
-	configMu  sync.RWMutex
+	AppConfig  *Config
+	configMu   sync.RWMutex
+	ConfigPath = "config.yaml" // Can be overridden by tests or init
 )
 
 type Config struct {
@@ -114,25 +115,73 @@ func UpdateSecuritySettings(autoLock, session int) (int, int, error) {
 	// Safely save the configuration (atomic write)
 	data, err := yaml.Marshal(AppConfig)
 	if err != nil {
-		// Rollback on marshalling error
 		AppConfig.Security.AutoLockTimeout = oldAutoLock
 		AppConfig.Security.SessionTimeout = oldSession
 		return 0, 0, fmt.Errorf("failed to marshal config: %v", err)
 	}
 
-	tmpPath := "config.yaml.tmp"
+	tmpPath := ConfigPath + ".tmp"
 	if err := os.WriteFile(tmpPath, data, 0644); err != nil {
 		AppConfig.Security.AutoLockTimeout = oldAutoLock
 		AppConfig.Security.SessionTimeout = oldSession
 		return 0, 0, fmt.Errorf("failed to write temp config: %v", err)
 	}
 
-	if err := os.Rename(tmpPath, "config.yaml"); err != nil {
+	if err := os.Rename(tmpPath, ConfigPath); err != nil {
 		AppConfig.Security.AutoLockTimeout = oldAutoLock
 		AppConfig.Security.SessionTimeout = oldSession
 		return 0, 0, fmt.Errorf("failed to rename temp config: %v", err)
 	}
 
 	return oldAutoLock, oldSession, nil
+}
+
+func UpdateDriveConfig(device, mapper, mountPoint, keyFile string) error {
+	configMu.Lock()
+	defer configMu.Unlock()
+
+	if AppConfig == nil {
+		AppConfig = &Config{}
+	}
+
+	oldDev := AppConfig.Drive.Device
+	oldMapper := AppConfig.Drive.Mapper
+	oldMount := AppConfig.Drive.MountPoint
+	oldKey := AppConfig.Drive.KeyFile
+
+	AppConfig.Drive.Device = device
+	AppConfig.Drive.Mapper = mapper
+	AppConfig.Drive.MountPoint = mountPoint
+	if keyFile != "" {
+		AppConfig.Drive.KeyFile = keyFile
+	}
+
+	data, err := yaml.Marshal(AppConfig)
+	if err != nil {
+		AppConfig.Drive.Device = oldDev
+		AppConfig.Drive.Mapper = oldMapper
+		AppConfig.Drive.MountPoint = oldMount
+		AppConfig.Drive.KeyFile = oldKey
+		return fmt.Errorf("failed to marshal config: %v", err)
+	}
+
+	tmpPath := ConfigPath + ".tmp"
+	if err := os.WriteFile(tmpPath, data, 0644); err != nil {
+		AppConfig.Drive.Device = oldDev
+		AppConfig.Drive.Mapper = oldMapper
+		AppConfig.Drive.MountPoint = oldMount
+		AppConfig.Drive.KeyFile = oldKey
+		return fmt.Errorf("failed to write temp config: %v", err)
+	}
+
+	if err := os.Rename(tmpPath, ConfigPath); err != nil {
+		AppConfig.Drive.Device = oldDev
+		AppConfig.Drive.Mapper = oldMapper
+		AppConfig.Drive.MountPoint = oldMount
+		AppConfig.Drive.KeyFile = oldKey
+		return fmt.Errorf("failed to rename temp config: %v", err)
+	}
+
+	return nil
 }
 

@@ -189,6 +189,55 @@
             box-shadow: 0 4px 12px rgba(16, 185, 129, 0.4);
         }
 
+        .btn-primary {
+            background: linear-gradient(135deg, var(--accent-cyan), #0e7490);
+        }
+
+        .btn-primary:hover {
+            box-shadow: 0 4px 12px rgba(6, 182, 212, 0.5);
+        }
+
+        /* Alerts */
+        .alert {
+            padding: 14px 18px;
+            border-radius: 10px;
+            font-size: 0.92rem;
+            line-height: 1.6;
+        }
+
+        .alert-danger {
+            background-color: rgba(244, 63, 94, 0.12);
+            border: 1px solid rgba(244, 63, 94, 0.35);
+            color: #fca5a5;
+        }
+
+        .alert-warning {
+            background-color: rgba(245, 158, 11, 0.12);
+            border: 1px solid rgba(245, 158, 11, 0.35);
+            color: #fcd34d;
+        }
+
+        .alert-success {
+            background-color: rgba(16, 185, 129, 0.12);
+            border: 1px solid rgba(16, 185, 129, 0.35);
+            color: #6ee7b7;
+        }
+
+        /* Progress bar */
+        .progress-bar-container {
+            background: rgba(255, 255, 255, 0.07);
+            border-radius: 99px;
+            overflow: hidden;
+            height: 10px;
+        }
+
+        .progress-bar {
+            height: 100%;
+            border-radius: 99px;
+            background: linear-gradient(90deg, var(--accent-cyan), #0e7490);
+            transition: width 0.4s ease;
+        }
+
         /* Dashboard UI */
         .nav-bar {
             display: flex;
@@ -711,6 +760,52 @@
             </form>
         </div>
 
+        <!-- AUTOMATED DRIVE ONBOARDING CARD (BOSS ONLY) -->
+        <div class="card" style="margin-top: 25px;">
+            <div style="display:flex; justify-content:space-between; align-items:center; border-bottom: 1px solid var(--border-color); padding-bottom: 15px; margin-bottom: 20px;">
+                <h2 style="font-size:1.4rem; margin:0;">Automated Drive Onboarding</h2>
+                {{if eq .Role "Boss"}}
+                    <button class="btn btn-primary" onclick="scanCandidates()" style="padding: 8px 16px; font-size: 0.9rem;">🔍 Scan Candidate Drives</button>
+                {{else}}
+                    <span class="badge badge-warning">Boss-Only Feature</span>
+                {{end}}
+            </div>
+
+            {{if eq .Role "Boss"}}
+                <!-- ONBOARDING PROGRESS CARD -->
+                <div id="onboarding-progress-container" style="display: none; margin-bottom: 25px; background: rgba(0, 0, 0, 0.3); border: 1px solid var(--border-color); border-radius: 12px; padding: 20px;">
+                    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 10px;">
+                        <h3 id="onboarding-step-title" style="font-size: 1.1rem; color: var(--accent-cyan); margin:0;">Step 0/14: Initializing...</h3>
+                        <span id="onboarding-status-badge" class="badge badge-warning">IN PROGRESS</span>
+                    </div>
+                    <p id="onboarding-step-desc" style="color: var(--text-secondary); font-size: 0.95rem; margin-bottom: 12px;">Preparing setup pipeline...</p>
+                    <div class="progress-bar-container" style="height: 12px; margin-bottom: 12px;">
+                        <div class="progress-bar" id="onboarding-progress-bar" style="width: 0%;"></div>
+                    </div>
+                    <p style="color: rgba(255, 255, 255, 0.45); font-size: 0.82rem; margin:0;">Note: Formatting (Step 6) and Filesystem Creation (Step 10) may take several minutes on large physical drives.</p>
+
+                    <div id="onboarding-error-box" class="alert alert-danger" style="display: none; margin-top: 15px;">
+                        <strong>Onboarding Failure:</strong>
+                        <pre id="onboarding-error-text" style="white-space: pre-wrap; font-size: 0.85rem; margin-top: 5px; font-family: monospace;"></pre>
+                    </div>
+
+                    <div id="onboarding-success-box" class="alert alert-success" style="display: none; margin-top: 15px;">
+                        <strong>Onboarding Complete!</strong> Drive setup finished successfully. The new device is now configured and ready for normal unlock operations.
+                    </div>
+                </div>
+
+                <!-- CANDIDATE DRIVES LIST -->
+                <div id="candidates-loading" style="display: none; text-align: center; color: var(--text-secondary); padding: 20px;">
+                    Scanning server block devices...
+                </div>
+                <div id="candidates-container">
+                    <p style="color: var(--text-secondary); font-size: 0.95rem;">Click <strong>Scan Candidate Drives</strong> to discover available unconfigured block devices on the server.</p>
+                </div>
+            {{else}}
+                <p style="color: var(--text-secondary); font-size: 0.95rem;">Drive onboarding (destructive formatting, LUKS encryption, keyfile enrollment, and partitioning) requires <strong>Boss identity authorization</strong>.</p>
+            {{end}}
+        </div>
+
         <!-- TABS FOR EXTRA LOGS & QR CONFIGS -->
         <div class="tab-buttons">
             <button class="tab-btn active" onclick="switchTab('tab-logs')">Audit Trails</button>
@@ -908,6 +1003,11 @@
                                 if (managerWindowSection) managerWindowSection.style.display = "none";
                             }
                             
+                            // Update Onboarding UI Progress
+                            if (data.onboardingStatus) {
+                                updateOnboardingUI(data.onboardingStatus);
+                            }
+
                             // If lock state changed and action buttons need toggling, reload page to refresh session state.
                             const currentUIPendingState = document.getElementById("luks-state-tracker").value;
                             if (currentUIPendingState !== data.status) {
@@ -919,7 +1019,282 @@
                     }
                 }, 1000);
             }
+
+            let selectedCandidate = null;
+
+            async function scanCandidates() {
+                const loading = document.getElementById("candidates-loading");
+                const container = document.getElementById("candidates-container");
+                if (loading) loading.style.display = "block";
+                if (container) container.innerHTML = "";
+
+                try {
+                    const res = await fetch("/api/drives/candidates");
+                    if (res.status === 200) {
+                        const data = await res.json();
+                        renderCandidates(data.candidates);
+                    } else {
+                        const err = await res.json();
+                        if (container) container.innerHTML = `<div class="alert alert-danger">Scan Failed: ${err.error || res.statusText}</div>`;
+                    }
+                } catch (e) {
+                    if (container) container.innerHTML = `<div class="alert alert-danger">Network Error scanning candidates: ${e}</div>`;
+                } finally {
+                    if (loading) loading.style.display = "none";
+                }
+            }
+
+            function renderCandidates(candidates) {
+                const container = document.getElementById("candidates-container");
+                if (!container) return;
+
+                if (!candidates || candidates.length === 0) {
+                    container.innerHTML = `<div class="alert alert-warning">No unconfigured candidate drives detected on server. (All block devices are either root disks or already configured).</div>`;
+                    return;
+                }
+
+                let html = `
+                    <div style="overflow-x:auto;">
+                        <table class="audit-table">
+                            <thead>
+                                <tr>
+                                    <th>Device Path</th>
+                                    <th>Size</th>
+                                    <th>Model</th>
+                                    <th>State / Signatures</th>
+                                    <th>Action</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                `;
+
+                candidates.forEach(c => {
+                    const isEmp = c.isEmpty;
+                    const badgeClass = isEmp ? "badge-success" : "badge-danger";
+                    const badgeText = isEmp ? "EMPTY" : "NOT EMPTY";
+                    const warningHtml = c.warning ? `<div style="color: var(--accent-danger); font-size: 0.8rem; margin-top: 4px;">⚠️ ${c.warning}</div>` : '';
+
+                    html += `
+                        <tr>
+                            <td><strong style="color:var(--accent-cyan);">${c.name}</strong></td>
+                            <td>${c.size}</td>
+                            <td>${c.model}</td>
+                            <td>
+                                <span class="badge ${badgeClass}">${badgeText}</span>
+                                ${warningHtml}
+                            </td>
+                            <td>
+                                <button class="btn ${isEmp ? 'btn-primary' : 'btn-danger'}" onclick='openOnboardModal(${JSON.stringify(c)})' style="padding: 6px 12px; font-size: 0.85rem;">
+                                    Select Drive &rarr;
+                                </button>
+                            </td>
+                        </tr>
+                    `;
+                });
+
+                html += `</tbody></table></div>`;
+                container.innerHTML = html;
+            }
+
+            function openOnboardModal(candidate) {
+                selectedCandidate = candidate;
+                document.getElementById("modal-dev-name").textContent = candidate.name;
+                document.getElementById("modal-dev-path").textContent = candidate.name;
+                document.getElementById("modal-dev-size").textContent = candidate.size;
+                document.getElementById("modal-dev-model").textContent = candidate.model;
+                document.getElementById("modal-check-dev-text").textContent = candidate.name;
+                document.getElementById("modal-typed-req").textContent = candidate.name;
+                
+                document.getElementById("modal-check-confirm").checked = false;
+                document.getElementById("modal-input-dev").value = "";
+                document.getElementById("modal-input-pass").value = "";
+                document.getElementById("modal-input-pass-confirm").value = "";
+                
+                validateOnboardModal();
+                document.getElementById("onboard-modal").style.display = "flex";
+            }
+
+            function closeOnboardModal() {
+                document.getElementById("onboard-modal").style.display = "none";
+            }
+
+            function togglePassVisibility(id) {
+                const input = document.getElementById(id);
+                if (input) {
+                    input.type = input.type === "password" ? "text" : "password";
+                }
+            }
+
+            function validateOnboardModal() {
+                if (!selectedCandidate) return;
+                const checked = document.getElementById("modal-check-confirm").checked;
+                const typedDev = document.getElementById("modal-input-dev").value.trim();
+                const pass = document.getElementById("modal-input-pass").value;
+                const passConfirm = document.getElementById("modal-input-pass-confirm").value;
+                const btn = document.getElementById("btn-start-onboard");
+                const msg = document.getElementById("pass-match-msg");
+
+                const pathMatches = typedDev === selectedCandidate.name;
+                const passValid = pass.length >= 12 && pass === passConfirm;
+
+                if (pass.length > 0 || passConfirm.length > 0) {
+                    if (!passValid) {
+                        msg.style.display = "block";
+                        if (pass.length < 12) {
+                            msg.textContent = "Passphrase must be at least 12 characters long.";
+                        } else {
+                            msg.textContent = "Passphrases do not match.";
+                        }
+                    } else {
+                        msg.style.display = "none";
+                    }
+                } else {
+                    msg.style.display = "none";
+                }
+
+                const isValid = checked && pathMatches && passValid;
+                btn.disabled = !isValid;
+            }
+
+            async function submitOnboardPipeline() {
+                if (!selectedCandidate) return;
+
+                const typedDev = document.getElementById("modal-input-dev").value.trim();
+                const pass = document.getElementById("modal-input-pass").value;
+                const passConfirm = document.getElementById("modal-input-pass-confirm").value;
+                const checked = document.getElementById("modal-check-confirm").checked;
+
+                closeOnboardModal();
+
+                const payload = {
+                    device: selectedCandidate.name,
+                    confirmationDevice: typedDev,
+                    confirmedCheckbox: checked,
+                    passphrase: pass,
+                    passphraseConfirm: passConfirm,
+                    mapperName: "secure-data",
+                    mountPoint: "/mnt/secure"
+                };
+
+                try {
+                    const res = await fetch("/api/drives/onboard", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify(payload)
+                    });
+
+                    if (res.status === 200) {
+                        // Pipeline started
+                    } else {
+                        const err = await res.json();
+                        alert("Failed to start onboarding: " + (err.error || res.statusText));
+                    }
+                } catch (e) {
+                    alert("Network error starting onboarding: " + e);
+                }
+            }
+
+            function updateOnboardingUI(status) {
+                const container = document.getElementById("onboarding-progress-container");
+                if (!container) return;
+
+                if (!status || status.status === "IDLE") {
+                    container.style.display = "none";
+                    return;
+                }
+
+                container.style.display = "block";
+
+                const title = document.getElementById("onboarding-step-title");
+                const desc = document.getElementById("onboarding-step-desc");
+                const bar = document.getElementById("onboarding-progress-bar");
+                const badge = document.getElementById("onboarding-status-badge");
+                const errBox = document.getElementById("onboarding-error-box");
+                const errText = document.getElementById("onboarding-error-text");
+                const succBox = document.getElementById("onboarding-success-box");
+
+                title.textContent = `Step ${status.currentStep}/${status.totalSteps}: ${status.stepDescription}`;
+                desc.textContent = status.stepDescription;
+
+                const percent = (status.currentStep / status.totalSteps) * 100;
+                bar.style.width = `${percent}%`;
+
+                if (status.status === "IN_PROGRESS") {
+                    badge.className = "badge badge-warning";
+                    badge.textContent = "IN PROGRESS";
+                    errBox.style.display = "none";
+                    succBox.style.display = "none";
+                } else if (status.status === "FAILED") {
+                    badge.className = "badge badge-danger";
+                    badge.textContent = "FAILED";
+                    errText.textContent = status.errorDetails || "Unknown pipeline failure.";
+                    errBox.style.display = "block";
+                    succBox.style.display = "none";
+                } else if (status.status === "SUCCESS") {
+                    badge.className = "badge badge-success";
+                    badge.textContent = "SUCCESS";
+                    errBox.style.display = "none";
+                    succBox.style.display = "block";
+                }
+            }
         </script>
+    {{end}}
+
+    <!-- DESTRUCTIVE CONFIRMATION MODAL (BOSS ONLY) -->
+    {{if eq .Role "Boss"}}
+    <div id="onboard-modal" style="display: none; position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; background: rgba(0, 0, 0, 0.75); backdrop-filter: blur(8px); z-index: 9999; justify-content: center; align-items: center; padding: 20px;">
+        <div class="card" style="max-width: 550px; width: 100%; border: 1px solid var(--accent-danger); box-shadow: 0 0 30px rgba(255, 77, 77, 0.25);">
+            <div style="display:flex; justify-content:space-between; align-items:center; border-bottom: 1px solid var(--border-color); padding-bottom: 15px; margin-bottom: 20px;">
+                <h3 style="color: var(--accent-danger); font-size: 1.3rem; margin:0;">⚠️ Destructive Onboarding Confirmation</h3>
+                <button onclick="closeOnboardModal()" style="background:none; border:none; color:var(--text-secondary); font-size:1.5rem; cursor:pointer;">&times;</button>
+            </div>
+
+            <div class="alert alert-danger" style="margin-bottom: 20px;">
+                <strong>WARNING: IRREVERSIBLE DATA LOSS</strong><br>
+                All files, partitions, and filesystems on <strong id="modal-dev-name">/dev/sdb</strong> will be permanently wiped.
+            </div>
+
+            <div style="margin-bottom: 15px; background: rgba(255, 255, 255, 0.05); padding: 12px; border-radius: 8px; font-size: 0.9rem;">
+                <div>Target Device: <strong id="modal-dev-path" style="color:var(--accent-cyan);">/dev/sdb</strong></div>
+                <div>Size: <span id="modal-dev-size">-</span> | Model: <span id="modal-dev-model">-</span></div>
+            </div>
+
+            <div class="form-group" style="margin-bottom: 15px;">
+                <label style="color: var(--accent-danger); font-weight: 600;">1. Confirmation Checkbox</label>
+                <label style="display: flex; align-items: center; gap: 10px; cursor: pointer; font-size: 0.9rem;">
+                    <input type="checkbox" id="modal-check-confirm" onchange="validateOnboardModal()">
+                    I understand this will permanently erase all data on <span id="modal-check-dev-text">/dev/sdb</span>.
+                </label>
+            </div>
+
+            <div class="form-group" style="margin-bottom: 15px;">
+                <label for="modal-input-dev">2. Type exact device path to confirm (<span id="modal-typed-req">/dev/sdb</span>)</label>
+                <input type="text" id="modal-input-dev" placeholder="/dev/sdb" autocomplete="off" oninput="validateOnboardModal()">
+            </div>
+
+            <div class="form-group" style="margin-bottom: 15px;">
+                <label for="modal-input-pass">3. LUKS Recovery Passphrase (Keyslot 0, min 12 chars)</label>
+                <div style="display:flex; gap:8px;">
+                    <input type="password" id="modal-input-pass" placeholder="Enter strong passphrase..." oninput="validateOnboardModal()" style="flex:1;">
+                    <button type="button" class="btn" onclick="togglePassVisibility('modal-input-pass')" style="padding:0 12px;">👁️</button>
+                </div>
+            </div>
+
+            <div class="form-group" style="margin-bottom: 20px;">
+                <label for="modal-input-pass-confirm">4. Confirm Recovery Passphrase</label>
+                <div style="display:flex; gap:8px;">
+                    <input type="password" id="modal-input-pass-confirm" placeholder="Confirm passphrase..." oninput="validateOnboardModal()" style="flex:1;">
+                    <button type="button" class="btn" onclick="togglePassVisibility('modal-input-pass-confirm')" style="padding:0 12px;">👁️</button>
+                </div>
+                <div id="pass-match-msg" style="font-size:0.82rem; margin-top:5px; color:var(--accent-danger); display:none;">Passphrases do not match or length &lt; 12</div>
+            </div>
+
+            <div style="display:flex; justify-content:flex-end; gap:12px;">
+                <button type="button" class="btn" onclick="closeOnboardModal()">Cancel</button>
+                <button type="button" id="btn-start-onboard" class="btn btn-danger" disabled onclick="submitOnboardPipeline()">Start Encryption & Setup</button>
+            </div>
+        </div>
+    </div>
     {{end}}
 
 </div>

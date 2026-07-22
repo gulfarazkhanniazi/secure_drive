@@ -472,10 +472,118 @@ func StartServer(cfg *config.Config) {
 			"manager2Presence":         auth.GetManagerPresence("manager2"),
 			"managerCountdownTimeLeft": auth.GetManagerCountdownTimeLeft(),
 			"lockReason":               drive.GetLockReason(),
+			"onboardingStatus":         drive.GetOnboardingStatus(),
 		}
 
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(response)
+	})
+
+	// GET /api/drives/candidates (Boss-only)
+	http.HandleFunc("/api/drives/candidates", func(w http.ResponseWriter, r *http.Request) {
+		sess, ok := getSessionUser(r)
+		if !ok {
+			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			return
+		}
+		if strings.ToLower(sess.Role) != "boss" {
+			logger.Audit.Log("UNAUTHORIZED_ONBOARD_ATTEMPT", sess.Username, "FAILURE")
+			http.Error(w, "Forbidden: Only Boss role can access drive onboarding", http.StatusForbidden)
+			return
+		}
+
+		candidates, err := drive.GetCandidateDrives(cfg)
+		if err != nil {
+			log.Printf("[API] Candidates error: %v", err)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusInternalServerError)
+			json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"candidates": candidates,
+		})
+	})
+
+	// POST /api/drives/onboard (Boss-only)
+	http.HandleFunc("/api/drives/onboard", func(w http.ResponseWriter, r *http.Request) {
+		sess, ok := getSessionUser(r)
+		if !ok {
+			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			return
+		}
+		if strings.ToLower(sess.Role) != "boss" {
+			logger.Audit.Log("UNAUTHORIZED_ONBOARD_ATTEMPT", sess.Username, "FAILURE")
+			http.Error(w, "Forbidden: Only Boss role can trigger drive onboarding", http.StatusForbidden)
+			return
+		}
+
+		if r.Method != http.MethodPost {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		type JSONOnboardRequest struct {
+			Device             string `json:"device"`
+			Passphrase         string `json:"passphrase"`
+			PassphraseConfirm  string `json:"passphraseConfirm"`
+			MapperName         string `json:"mapperName"`
+			MountPoint         string `json:"mountPoint"`
+			ConfirmationDevice string `json:"confirmationDevice"`
+			ConfirmedCheckbox  bool   `json:"confirmedCheckbox"`
+		}
+
+		var payload JSONOnboardRequest
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			http.Error(w, "Invalid JSON payload", http.StatusBadRequest)
+			return
+		}
+
+		passBytes := []byte(payload.Passphrase)
+		passConfirmBytes := []byte(payload.PassphraseConfirm)
+
+		payload.Passphrase = ""
+		payload.PassphraseConfirm = ""
+
+		req := drive.OnboardRequest{
+			Device:             payload.Device,
+			Passphrase:         passBytes,
+			PassphraseConfirm:  passConfirmBytes,
+			MapperName:         payload.MapperName,
+			MountPoint:         payload.MountPoint,
+			ConfirmationDevice: payload.ConfirmationDevice,
+			ConfirmedCheckbox:  payload.ConfirmedCheckbox,
+		}
+
+		err := drive.RunOnboardingPipeline(cfg, req, sess.Username)
+		if err != nil {
+			log.Printf("[API] Onboarding pipeline error: %v", err)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]string{
+			"status":  "STARTED",
+			"message": "Onboarding pipeline started successfully",
+		})
+	})
+
+	// GET /api/drives/onboard/status
+	http.HandleFunc("/api/drives/onboard/status", func(w http.ResponseWriter, r *http.Request) {
+		_, ok := getSessionUser(r)
+		if !ok {
+			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			return
+		}
+
+		status := drive.GetOnboardingStatus()
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(status)
 	})
 
 	// Serving logs template on /logs
