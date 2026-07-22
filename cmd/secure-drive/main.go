@@ -48,6 +48,9 @@ func main() {
 		log.Fatalf("Error loading config: %v", err)
 	}
 
+	// Startup checks: check DeviceUUID config migration status
+	drive.CheckConfigMigration(config.AppConfig)
+
 	// Load users
 	err = auth.LoadUsers(config.AppConfig.Users.File)
 	if err != nil {

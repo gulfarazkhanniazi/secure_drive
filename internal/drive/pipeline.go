@@ -225,14 +225,32 @@ func executePipeline(cfg *config.Config, device string, passphrase []byte, mappe
 		return
 	}
 
-	if rootDisk != "" && (device == rootDisk || strings.HasPrefix(device, rootDisk)) {
-		failPipeline(1, "Root disk safety check", fmt.Errorf("CRITICAL SAFETY BLOCK: Target device %s is the system root disk (%s)", device, rootDisk), "", user)
+	rootParent := GetParentDiskPath(rootDisk)
+	targetParent := GetParentDiskPath(device)
+
+	// Rule 1: Root disk safety check
+	if rootParent != "" && targetParent == rootParent {
+		failPipeline(1, "Root disk safety check", fmt.Errorf("CRITICAL SAFETY BLOCK: Target device %s matches system root disk (%s)", device, rootDisk), "", user)
 		return
 	}
 
-	if cfg.Drive.Device != "" && (device == cfg.Drive.Device || strings.HasPrefix(cfg.Drive.Device, device)) {
-		failPipeline(1, "Configured drive safety check", fmt.Errorf("CRITICAL SAFETY BLOCK: Target device %s is already configured in config.yaml", device), "", user)
+	// Rule 2: Active mapper safety check
+	activeMapperDisk := GetActiveMapperParentDisk(cfg.Drive.Mapper)
+	if activeMapperDisk != "" && targetParent == activeMapperDisk {
+		failPipeline(1, "Active mapper safety check", fmt.Errorf("CRITICAL SAFETY BLOCK: Target device %s is currently backing an active LUKS mapper (%s)", device, cfg.Drive.Mapper), "", user)
 		return
+	}
+
+	// Rule 3: Stored LUKS UUID safety check
+	if cfg.Drive.DeviceUUID != "" {
+		targetUUID, targetErr := GetLuksUUID(device)
+		if targetErr != nil {
+			targetUUID, targetErr = GetLuksUUID(DetectPartitionName(device))
+		}
+		if targetErr == nil && targetUUID != "" && targetUUID == cfg.Drive.DeviceUUID {
+			failPipeline(1, "Stored UUID safety check", fmt.Errorf("CRITICAL SAFETY BLOCK: Target device %s matches stored configured LUKS UUID (%s)", device, cfg.Drive.DeviceUUID), "", user)
+			return
+		}
 	}
 
 	cmdSize := exec.Command("blockdev", "--getsize64", device)
@@ -526,7 +544,15 @@ func executePipeline(cfg *config.Config, device string, passphrase []byte, mappe
 	start = time.Now()
 	updateStepProgress(14, "Step 14/14: Updating Configuration (config.yaml)...", nil)
 
-	if errCfg := config.UpdateDriveConfig(partitionDev, mapperName, mountPoint, keyfilePath); errCfg != nil {
+	deviceUUID, _ := GetLuksUUID(partitionDev)
+	if deviceUUID == "" {
+		deviceUUID, _ = GetLuksUUID(device)
+	}
+	if deviceUUID == "" && IsMockMode() {
+		deviceUUID = fmt.Sprintf("mock-luks-uuid-%s", filepath.Base(partitionDev))
+	}
+
+	if errCfg := config.UpdateDriveConfig(partitionDev, mapperName, mountPoint, keyfilePath, deviceUUID); errCfg != nil {
 		failPipeline(14, "Atomic config update", errCfg, "", user)
 		return
 	}
@@ -592,7 +618,8 @@ func executeMockPipeline(cfg *config.Config, device, mapperName, mountPoint, use
 	if cfg != nil && cfg.Drive.KeyFile != "" {
 		keyFile = cfg.Drive.KeyFile
 	}
-	config.UpdateDriveConfig(partitionDev, mapperName, mountPoint, keyFile)
+	mockUUID := fmt.Sprintf("mock-luks-uuid-%s", filepath.Base(partitionDev))
+	config.UpdateDriveConfig(partitionDev, mapperName, mountPoint, keyFile, mockUUID)
 
 	SetMockDeviceExists(true)
 

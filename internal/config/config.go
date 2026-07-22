@@ -20,6 +20,7 @@ type Config struct {
 		Mapper     string `yaml:"mapper"`
 		MountPoint string `yaml:"mountPoint"`
 		KeyFile    string `yaml:"keyFile"`
+		DeviceUUID string `yaml:"deviceUUID,omitempty"`
 	} `yaml:"drive"`
 
 	Users struct {
@@ -136,7 +137,7 @@ func UpdateSecuritySettings(autoLock, session int) (int, int, error) {
 	return oldAutoLock, oldSession, nil
 }
 
-func UpdateDriveConfig(device, mapper, mountPoint, keyFile string) error {
+func UpdateDriveConfig(device, mapper, mountPoint, keyFile, deviceUUID string) error {
 	configMu.Lock()
 	defer configMu.Unlock()
 
@@ -148,12 +149,16 @@ func UpdateDriveConfig(device, mapper, mountPoint, keyFile string) error {
 	oldMapper := AppConfig.Drive.Mapper
 	oldMount := AppConfig.Drive.MountPoint
 	oldKey := AppConfig.Drive.KeyFile
+	oldUUID := AppConfig.Drive.DeviceUUID
 
 	AppConfig.Drive.Device = device
 	AppConfig.Drive.Mapper = mapper
 	AppConfig.Drive.MountPoint = mountPoint
 	if keyFile != "" {
 		AppConfig.Drive.KeyFile = keyFile
+	}
+	if deviceUUID != "" {
+		AppConfig.Drive.DeviceUUID = deviceUUID
 	}
 
 	data, err := yaml.Marshal(AppConfig)
@@ -162,6 +167,7 @@ func UpdateDriveConfig(device, mapper, mountPoint, keyFile string) error {
 		AppConfig.Drive.Mapper = oldMapper
 		AppConfig.Drive.MountPoint = oldMount
 		AppConfig.Drive.KeyFile = oldKey
+		AppConfig.Drive.DeviceUUID = oldUUID
 		return fmt.Errorf("failed to marshal config: %v", err)
 	}
 
@@ -171,6 +177,7 @@ func UpdateDriveConfig(device, mapper, mountPoint, keyFile string) error {
 		AppConfig.Drive.Mapper = oldMapper
 		AppConfig.Drive.MountPoint = oldMount
 		AppConfig.Drive.KeyFile = oldKey
+		AppConfig.Drive.DeviceUUID = oldUUID
 		return fmt.Errorf("failed to write temp config: %v", err)
 	}
 
@@ -179,6 +186,7 @@ func UpdateDriveConfig(device, mapper, mountPoint, keyFile string) error {
 		AppConfig.Drive.Mapper = oldMapper
 		AppConfig.Drive.MountPoint = oldMount
 		AppConfig.Drive.KeyFile = oldKey
+		AppConfig.Drive.DeviceUUID = oldUUID
 		return fmt.Errorf("failed to rename temp config: %v", err)
 	}
 

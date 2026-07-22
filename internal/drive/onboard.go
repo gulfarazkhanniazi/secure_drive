@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"secure-drive/internal/config"
 )
@@ -41,13 +42,196 @@ type LsblkDevice struct {
 	Children   []LsblkDevice `json:"children"`
 }
 
+var (
+	mockUUIDsMu sync.RWMutex
+	mockUUIDs   = make(map[string]string)
+
+	mockActiveMapperDeviceMu sync.RWMutex
+	mockActiveMapperDevice   string
+
+	migrationNoticeMu     sync.Mutex
+	migrationNoticeLogged bool
+)
+
+func SetMockUUID(device, uuid string) {
+	mockUUIDsMu.Lock()
+	defer mockUUIDsMu.Unlock()
+	mockUUIDs[device] = uuid
+}
+
+func ClearMockUUID(device string) {
+	mockUUIDsMu.Lock()
+	defer mockUUIDsMu.Unlock()
+	delete(mockUUIDs, device)
+}
+
+func SetMockActiveMapperDevice(dev string) {
+	mockActiveMapperDeviceMu.Lock()
+	defer mockActiveMapperDeviceMu.Unlock()
+	mockActiveMapperDevice = dev
+}
+
+func CheckConfigMigration(cfg *config.Config) {
+	migrationNoticeMu.Lock()
+	defer migrationNoticeMu.Unlock()
+	if migrationNoticeLogged {
+		return
+	}
+	migrationNoticeLogged = true
+
+	if cfg != nil && cfg.Drive.DeviceUUID == "" && cfg.Drive.Device != "" {
+		log.Printf("NOTICE: Drive configuration has no DeviceUUID stored. Rule 3 (Stored-UUID exclusion) will be skipped. Run 'cryptsetup luksUUID %s' and set 'deviceUUID' in config.yaml for full protection.", cfg.Drive.Device)
+	}
+}
+
+func GetLuksUUID(device string) (string, error) {
+	device = strings.TrimSpace(device)
+	if device == "" {
+		return "", fmt.Errorf("empty device")
+	}
+
+	mockUUIDsMu.RLock()
+	val, ok := mockUUIDs[device]
+	mockUUIDsMu.RUnlock()
+
+	if ok {
+		if val == "" {
+			return "", fmt.Errorf("no mock uuid for %s", device)
+		}
+		return val, nil
+	}
+
+	if IsMockMode() {
+		return "", fmt.Errorf("mock mode: no uuid for %s", device)
+	}
+
+	cmd := exec.Command("cryptsetup", "luksUUID", device)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return "", err
+	}
+	uuid := strings.TrimSpace(string(out))
+	if uuid == "" {
+		return "", fmt.Errorf("empty uuid returned for %s", device)
+	}
+	return uuid, nil
+}
+
+func GetCandidateLsblkLuksUUID(dev LsblkDevice) (string, error) {
+	if dev.Fstype != nil && *dev.Fstype == "crypto_LUKS" && dev.Uuid != nil && *dev.Uuid != "" {
+		return *dev.Uuid, nil
+	}
+	for _, child := range dev.Children {
+		if child.Fstype != nil && *child.Fstype == "crypto_LUKS" && child.Uuid != nil && *child.Uuid != "" {
+			return *child.Uuid, nil
+		}
+	}
+	if uuid, err := GetLuksUUID(dev.Name); err == nil && uuid != "" {
+		return uuid, nil
+	}
+	if uuid, err := GetLuksUUID(DetectPartitionName(dev.Name)); err == nil && uuid != "" {
+		return uuid, nil
+	}
+	return "", fmt.Errorf("no LUKS UUID found for candidate %s", dev.Name)
+}
+
+func GetActiveMapperParentDisk(mapperName string) string {
+	mapperName = strings.TrimSpace(mapperName)
+	if mapperName == "" {
+		return ""
+	}
+
+	mockActiveMapperDeviceMu.RLock()
+	mockDev := mockActiveMapperDevice
+	mockActiveMapperDeviceMu.RUnlock()
+
+	if IsMockMode() {
+		if mockDev != "" {
+			return GetParentDiskPath(mockDev)
+		}
+		if mockUnlocked || mockMounted {
+			return GetParentDiskPath("/dev/sdb")
+		}
+		return ""
+	}
+
+	cmd := exec.Command("cryptsetup", "status", mapperName)
+	out, err := cmd.CombinedOutput()
+	if err == nil {
+		lines := strings.Split(string(out), "\n")
+		for _, line := range lines {
+			line = strings.TrimSpace(line)
+			if strings.HasPrefix(line, "device:") {
+				fields := strings.Fields(line)
+				if len(fields) >= 2 {
+					return GetParentDiskPath(fields[1])
+				}
+			}
+		}
+	}
+
+	cmdLsblk := exec.Command("lsblk", "-p", "-n", "-o", "PKNAME", "/dev/mapper/"+mapperName)
+	if outLsblk, errLsblk := cmdLsblk.CombinedOutput(); errLsblk == nil {
+		parent := strings.TrimSpace(string(outLsblk))
+		if parent != "" {
+			return GetParentDiskPath(parent)
+		}
+	}
+
+	return ""
+}
+
+// GetParentDiskPath resolves a device or partition path to its parent physical disk path.
+func GetParentDiskPath(devPath string) string {
+	devPath = strings.TrimSpace(devPath)
+	if devPath == "" {
+		return ""
+	}
+	base := filepath.Base(devPath)
+
+	var parentBase string
+	if strings.Contains(base, "nvme") || strings.Contains(base, "mmcblk") {
+		idx := strings.LastIndex(base, "p")
+		if idx > 0 && idx < len(base)-1 {
+			isAllDigits := true
+			for _, ch := range base[idx+1:] {
+				if ch < '0' || ch > '9' {
+					isAllDigits = false
+					break
+				}
+			}
+			if isAllDigits {
+				parentBase = base[:idx]
+			} else {
+				parentBase = base
+			}
+		} else {
+			parentBase = base
+		}
+	} else {
+		i := len(base)
+		for i > 0 && base[i-1] >= '0' && base[i-1] <= '9' {
+			i--
+		}
+		if i > 0 && i < len(base) {
+			parentBase = base[:i]
+		} else {
+			parentBase = base
+		}
+	}
+
+	if strings.HasPrefix(devPath, "/dev/") {
+		return "/dev/" + parentBase
+	}
+	return parentBase
+}
+
 // GetRootParentDisk identifies the physical parent disk of the current root filesystem /
 func GetRootParentDisk() (string, error) {
 	if IsMockMode() {
 		return "/dev/vda", nil
 	}
 
-	// 1. Run findmnt to get source of /
 	cmd := exec.Command("findmnt", "-no", "SOURCE", "/")
 	out, err := cmd.CombinedOutput()
 	if err != nil {
@@ -55,13 +239,11 @@ func GetRootParentDisk() (string, error) {
 	}
 	rootSource := strings.TrimSpace(string(out))
 
-	// Resolve symlinks (e.g. /dev/mapper/xxx -> /dev/dm-0)
 	resolved, err := filepath.EvalSymlinks(rootSource)
 	if err == nil {
 		rootSource = resolved
 	}
 
-	// 2. Trace parent disk using lsblk -p -s -n -o NAME,TYPE <rootSource>
 	cmdParent := exec.Command("lsblk", "-p", "-s", "-n", "-o", "NAME,TYPE", rootSource)
 	parentOut, parentErr := cmdParent.CombinedOutput()
 	if parentErr == nil {
@@ -74,36 +256,45 @@ func GetRootParentDisk() (string, error) {
 		}
 	}
 
-	// Fallback sysfs check: /sys/class/block/<dev>/partition
 	baseDev := filepath.Base(rootSource)
 	sysPath := fmt.Sprintf("/sys/class/block/%s/partition", baseDev)
 	if _, statErr := os.Stat(sysPath); statErr == nil {
-		parentName := stripPartitionSuffix(baseDev)
-		return "/dev/" + parentName, nil
+		return GetParentDiskPath(rootSource), nil
 	}
 
-	return rootSource, nil
+	return GetParentDiskPath(rootSource), nil
 }
 
 func stripPartitionSuffix(dev string) string {
-	if strings.Contains(dev, "nvme") || strings.Contains(dev, "mmcblk") {
-		idx := strings.LastIndex(dev, "p")
-		if idx > 0 {
-			return dev[:idx]
-		}
-	}
-	return strings.TrimRight(dev, "0123456789")
+	return GetParentDiskPath(dev)
 }
 
 // GetCandidateDrives scans for block devices available for onboarding
 func GetCandidateDrives(cfg *config.Config) ([]CandidateDrive, error) {
+	CheckConfigMigration(cfg)
+
 	if IsMockMode() {
 		return getMockCandidateDrives(cfg), nil
 	}
 
+	// Rule 1: Root disk parent path (exact match)
 	rootDisk, err := GetRootParentDisk()
 	if err != nil {
 		log.Printf("[ONBOARD] Warning resolving root disk: %v", err)
+	}
+	rootParent := GetParentDiskPath(rootDisk)
+
+	// Rule 2: Active mapper parent disk (exact match)
+	mapperName := ""
+	if cfg != nil {
+		mapperName = cfg.Drive.Mapper
+	}
+	activeMapperDisk := GetActiveMapperParentDisk(mapperName)
+
+	// Rule 3: Stored LUKS UUID (exact match)
+	storedUUID := ""
+	if cfg != nil {
+		storedUUID = cfg.Drive.DeviceUUID
 	}
 
 	cmd := exec.Command("lsblk", "-J", "-p", "-o", "NAME,SIZE,TYPE,MOUNTPOINT,MODEL,FSTYPE,UUID")
@@ -117,11 +308,6 @@ func GetCandidateDrives(cfg *config.Config) ([]CandidateDrive, error) {
 		return nil, fmt.Errorf("failed to parse lsblk output: %v", err)
 	}
 
-	configuredDev := ""
-	if cfg != nil {
-		configuredDev = cfg.Drive.Device
-	}
-
 	var candidates []CandidateDrive
 	for _, dev := range parsed.Blockdevices {
 		if dev.Type != "disk" {
@@ -133,14 +319,24 @@ func GetCandidateDrives(cfg *config.Config) ([]CandidateDrive, error) {
 			continue
 		}
 
-		// Filter out root disk & root partition
-		if rootDisk != "" && (dev.Name == rootDisk || strings.HasPrefix(dev.Name, rootDisk)) {
+		candParent := GetParentDiskPath(dev.Name)
+
+		// Rule 1: Root disk exclusion (exact match on parent disk path)
+		if rootParent != "" && candParent == rootParent {
 			continue
 		}
 
-		// Filter out currently configured drive
-		if configuredDev != "" && (dev.Name == configuredDev || strings.HasPrefix(configuredDev, dev.Name)) {
+		// Rule 2: Active mapper exclusion (exact match on backing physical parent disk)
+		if activeMapperDisk != "" && candParent == activeMapperDisk {
 			continue
+		}
+
+		// Rule 3: Stored-UUID exclusion (exact match on LUKS UUID stored in config)
+		if storedUUID != "" {
+			candUUID, candErr := GetCandidateLsblkLuksUUID(dev)
+			if candErr == nil && candUUID != "" && candUUID == storedUUID {
+				continue
+			}
 		}
 
 		cand := inspectCandidateDevice(dev)
@@ -163,7 +359,6 @@ func inspectCandidateDevice(dev LsblkDevice) CandidateDrive {
 		Type:  dev.Type,
 	}
 
-	// Get size in bytes
 	cmdSize := exec.Command("blockdev", "--getsize64", dev.Name)
 	outSize, errSize := cmdSize.CombinedOutput()
 	if errSize == nil {
@@ -172,11 +367,9 @@ func inspectCandidateDevice(dev LsblkDevice) CandidateDrive {
 		cand.SizeBytes = sz
 	}
 
-	// Inspect child partitions, fstype, luks
 	hasPartitions := len(dev.Children) > 0
 	hasFS := (dev.Fstype != nil && *dev.Fstype != "")
 
-	// Check for LUKS header on device or children
 	hasLUKS := (dev.Fstype != nil && *dev.Fstype == "crypto_LUKS")
 	for _, child := range dev.Children {
 		if child.Fstype != nil {
@@ -222,9 +415,22 @@ func inspectCandidateDevice(dev LsblkDevice) CandidateDrive {
 }
 
 func getMockCandidateDrives(cfg *config.Config) []CandidateDrive {
-	configuredDev := "/dev/sdb1"
-	if cfg != nil && cfg.Drive.Device != "" {
-		configuredDev = cfg.Drive.Device
+	CheckConfigMigration(cfg)
+
+	// Rule 1: Root disk parent path (mock = /dev/vda)
+	rootParent := "/dev/vda"
+
+	// Rule 2: Active mapper parent disk
+	mapperName := ""
+	if cfg != nil {
+		mapperName = cfg.Drive.Mapper
+	}
+	activeMapperDisk := GetActiveMapperParentDisk(mapperName)
+
+	// Rule 3: Stored LUKS UUID
+	storedUUID := ""
+	if cfg != nil {
+		storedUUID = cfg.Drive.DeviceUUID
 	}
 
 	candidates := []CandidateDrive{
@@ -256,16 +462,80 @@ func getMockCandidateDrives(cfg *config.Config) []CandidateDrive {
 		},
 	}
 
+	mockUUIDsMu.RLock()
+	sdaUUID, sdaMockExists := mockUUIDs["/dev/sda"]
+	if !sdaMockExists {
+		sdaUUID, sdaMockExists = mockUUIDs["/dev/sda1"]
+	}
+	mockUUIDsMu.RUnlock()
+
+	mockActiveMapperDeviceMu.RLock()
+	mockMapperDev := mockActiveMapperDevice
+	mockActiveMapperDeviceMu.RUnlock()
+
+	if sdaMockExists || mockMapperDev == "/dev/sda" || mockMapperDev == "/dev/sda1" {
+		state := "HAS_LUKS"
+		isEmpty := false
+		warning := "NOT EMPTY — Contains an existing LUKS encrypted header. All data will be permanently destroyed."
+		hasLUKS := true
+		hasFS := false
+
+		if sdaUUID == "" && sdaMockExists { // non-LUKS drive in mock
+			state = "EMPTY"
+			isEmpty = true
+			warning = ""
+			hasLUKS = false
+		}
+
+		candidates = append([]CandidateDrive{
+			{
+				Name:          "/dev/sda",
+				Size:          "250G",
+				SizeBytes:     268435456000,
+				Model:         "Mock SATA Drive",
+				Type:          "disk",
+				State:         state,
+				IsEmpty:       isEmpty,
+				Warning:       warning,
+				HasPartitions: true,
+				HasLUKS:       hasLUKS,
+				HasFS:         hasFS,
+			},
+		}, candidates...)
+	}
+
 	var filtered []CandidateDrive
 	for _, c := range candidates {
-		if c.Name != configuredDev && !strings.HasPrefix(configuredDev, c.Name) {
-			filtered = append(filtered, c)
+		candParent := GetParentDiskPath(c.Name)
+
+		// Rule 1: Root disk exclusion
+		if rootParent != "" && candParent == rootParent {
+			continue
 		}
+
+		// Rule 2: Active mapper exclusion
+		if activeMapperDisk != "" && candParent == activeMapperDisk {
+			continue
+		}
+
+		// Rule 3: Stored-UUID exclusion
+		if storedUUID != "" {
+			candUUID, candErr := GetLuksUUID(c.Name)
+			if candErr != nil {
+				candUUID, candErr = GetLuksUUID(DetectPartitionName(c.Name))
+			}
+			if candErr == nil && candUUID != "" && candUUID == storedUUID {
+				continue
+			}
+		}
+
+		filtered = append(filtered, c)
 	}
+
 	return filtered
 }
 
-// DetectPartitionName derives the child partition path for a drive (e.g. /dev/sdb -> /dev/sdb1, /dev/nvme0n1 -> /dev/nvme0n1p1)
+// DetectPartitionName derives the child partition path for a drive
 func DetectPartitionName(device string) string {
 	device = strings.TrimSpace(device)
 	if strings.Contains(device, "nvme") || strings.Contains(device, "mmcblk") {

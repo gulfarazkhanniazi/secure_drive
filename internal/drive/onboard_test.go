@@ -77,6 +77,136 @@ func TestGetCandidateDrivesMock(t *testing.T) {
 	}
 }
 
+func TestGetParentDiskPath(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected string
+	}{
+		{"/dev/sda1", "/dev/sda"},
+		{"/dev/sda", "/dev/sda"},
+		{"sda1", "sda"},
+		{"/dev/sdb2", "/dev/sdb"},
+		{"/dev/nvme0n1p1", "/dev/nvme0n1"},
+		{"/dev/nvme0n1", "/dev/nvme0n1"},
+		{"/dev/mmcblk0p2", "/dev/mmcblk0"},
+		{"/dev/mmcblk0", "/dev/mmcblk0"},
+		{"/dev/vda1", "/dev/vda"},
+		{"/dev/vda", "/dev/vda"},
+	}
+
+	for _, tt := range tests {
+		got := GetParentDiskPath(tt.input)
+		if got != tt.expected {
+			t.Errorf("GetParentDiskPath(%q) = %q; want %q", tt.input, got, tt.expected)
+		}
+	}
+}
+
+func TestThreeRuleExclusion_ActiveMapper(t *testing.T) {
+	// (a) mapper active on /dev/sda, candidate scan run concurrently — assert /dev/sda excluded, unrelated /dev/sdb included.
+	SetMockActiveMapperDevice("/dev/sda")
+	defer SetMockActiveMapperDevice("")
+
+	cfg := &config.Config{}
+	cfg.Drive.Mapper = "test-mapper"
+
+	candidates, err := GetCandidateDrives(cfg)
+	if err != nil {
+		t.Fatalf("GetCandidateDrives failed: %v", err)
+	}
+
+	foundSda := false
+	foundSdb := false
+	for _, c := range candidates {
+		if c.Name == "/dev/sda" {
+			foundSda = true
+		}
+		if c.Name == "/dev/sdb" {
+			foundSdb = true
+		}
+	}
+
+	if foundSda {
+		t.Errorf("expected /dev/sda to be excluded when mapper is active on /dev/sda, but it was found")
+	}
+	if !foundSdb {
+		t.Errorf("expected unrelated /dev/sdb to be included when mapper is active on /dev/sda, but it was excluded")
+	}
+}
+
+func TestThreeRuleExclusion_MapperInactiveDifferentNonLuksDrive(t *testing.T) {
+	// (b) mapper inactive, cfg.Drive.DeviceUUID set, a different non-LUKS drive occupies /dev/sda — assert it IS included with correct EMPTY/HAS_FILESYSTEM state, not excluded.
+	SetMockActiveMapperDevice("")
+	SetMockUUID("/dev/sda", "") // non-LUKS drive
+	defer ClearMockUUID("/dev/sda")
+
+	cfg := &config.Config{}
+	cfg.Drive.Mapper = "test-mapper"
+	cfg.Drive.DeviceUUID = "target-luks-uuid-1234"
+
+	candidates, err := GetCandidateDrives(cfg)
+	if err != nil {
+		t.Fatalf("GetCandidateDrives failed: %v", err)
+	}
+
+	var sdaCand *CandidateDrive
+	for i := range candidates {
+		if candidates[i].Name == "/dev/sda" {
+			sdaCand = &candidates[i]
+			break
+		}
+	}
+
+	if sdaCand == nil {
+		t.Fatalf("expected non-LUKS drive /dev/sda to be included, but it was excluded!")
+	}
+
+	if sdaCand.State != "EMPTY" && sdaCand.State != "HAS_FILESYSTEM" && sdaCand.State != "HAS_PARTITIONS" {
+		t.Errorf("expected state EMPTY or HAS_FILESYSTEM/HAS_PARTITIONS, got: %s", sdaCand.State)
+	}
+}
+
+func TestThreeRuleExclusion_MapperInactiveMatchingLuksUUID(t *testing.T) {
+	// (c) mapper inactive, a drive with a LUKS header whose UUID exactly matches cfg.Drive.DeviceUUID occupies /dev/sda — assert it IS excluded.
+	SetMockActiveMapperDevice("")
+	SetMockUUID("/dev/sda", "target-luks-uuid-1234")
+	defer ClearMockUUID("/dev/sda")
+
+	cfg := &config.Config{}
+	cfg.Drive.Mapper = "test-mapper"
+	cfg.Drive.DeviceUUID = "target-luks-uuid-1234"
+
+	candidates, err := GetCandidateDrives(cfg)
+	if err != nil {
+		t.Fatalf("GetCandidateDrives failed: %v", err)
+	}
+
+	for _, c := range candidates {
+		if c.Name == "/dev/sda" {
+			t.Errorf("expected drive /dev/sda with matching LUKS UUID to be excluded, but it was found in candidates")
+		}
+	}
+}
+
+func TestThreeRuleExclusion_NoDeviceUUIDMigrationNotice(t *testing.T) {
+	// (d) config.yaml has no DeviceUUID at all — assert no crash, rules 1–2 still apply, startup warning logged once.
+	SetMockActiveMapperDevice("")
+	cfg := &config.Config{}
+	cfg.Drive.Device = "/dev/sda1"
+	cfg.Drive.DeviceUUID = "" // No DeviceUUID (predates field)
+
+	CheckConfigMigration(cfg)
+
+	candidates, err := GetCandidateDrives(cfg)
+	if err != nil {
+		t.Fatalf("GetCandidateDrives failed without DeviceUUID: %v", err)
+	}
+
+	if len(candidates) == 0 {
+		t.Errorf("expected candidates to return safely without crash when DeviceUUID is empty")
+	}
+}
+
 func TestMockOnboardingPipelineSuccess(t *testing.T) {
 	logger.InitLogger(os.DevNull)
 

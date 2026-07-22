@@ -1,10 +1,12 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{{.Title}}</title>
-    <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🔒</text></svg>">
+    <link rel="icon"
+        href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🔒</text></svg>">
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&display=swap');
 
@@ -37,10 +39,10 @@
             flex-direction: column;
             justify-content: center;
             align-items: center;
-            background-image: 
-                radial-gradient(at 0% 0%, hsla(253,16%,7%,1) 0, transparent 50%), 
-                radial-gradient(at 50% 0%, hsla(225,39%,30%,0.2) 0, transparent 50%),
-                radial-gradient(at 100% 0%, hsla(339,49%,30%,0.15) 0, transparent 50%);
+            background-image:
+                radial-gradient(at 0% 0%, hsla(253, 16%, 7%, 1) 0, transparent 50%),
+                radial-gradient(at 50% 0%, hsla(225, 39%, 30%, 0.2) 0, transparent 50%),
+                radial-gradient(at 100% 0%, hsla(339, 49%, 30%, 0.15) 0, transparent 50%);
             padding: 20px;
         }
 
@@ -121,7 +123,8 @@
             letter-spacing: 0.05em;
         }
 
-        select, input {
+        select,
+        input {
             width: 100%;
             padding: 14px;
             background-color: rgba(17, 24, 39, 0.8);
@@ -133,7 +136,8 @@
             transition: all 0.3s ease;
         }
 
-        select:focus, input:focus {
+        select:focus,
+        input:focus {
             outline: none;
             border-color: var(--accent-cyan);
             box-shadow: 0 0 0 2px rgba(6, 182, 212, 0.2);
@@ -195,6 +199,24 @@
 
         .btn-primary:hover {
             box-shadow: 0 4px 12px rgba(6, 182, 212, 0.5);
+        }
+
+        .btn-icon {
+            width: auto;
+            flex-shrink: 0;
+            white-space: nowrap;
+            padding: 0 16px;
+            background: rgba(255, 255, 255, 0.08);
+            color: var(--text-primary);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 0.85rem;
+            transition: all 0.3s ease;
+        }
+
+        .btn-icon:hover {
+            background: rgba(255, 255, 255, 0.15);
         }
 
         /* Alerts */
@@ -332,21 +354,45 @@
         }
 
         @keyframes pulse-danger {
-            0% { box-shadow: 0 0 0 0 rgba(244, 63, 94, 0.4); }
-            70% { box-shadow: 0 0 0 6px rgba(244, 63, 94, 0); }
-            100% { box-shadow: 0 0 0 0 rgba(244, 63, 94, 0); }
+            0% {
+                box-shadow: 0 0 0 0 rgba(244, 63, 94, 0.4);
+            }
+
+            70% {
+                box-shadow: 0 0 0 6px rgba(244, 63, 94, 0);
+            }
+
+            100% {
+                box-shadow: 0 0 0 0 rgba(244, 63, 94, 0);
+            }
         }
 
         @keyframes pulse-success {
-            0% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.4); }
-            70% { box-shadow: 0 0 0 6px rgba(16, 185, 129, 0); }
-            100% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0); }
+            0% {
+                box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.4);
+            }
+
+            70% {
+                box-shadow: 0 0 0 6px rgba(16, 185, 129, 0);
+            }
+
+            100% {
+                box-shadow: 0 0 0 0 rgba(16, 185, 129, 0);
+            }
         }
 
         @keyframes pulse-warning {
-            0% { box-shadow: 0 0 0 0 rgba(245, 158, 11, 0.4); }
-            70% { box-shadow: 0 0 0 6px rgba(245, 158, 11, 0); }
-            100% { box-shadow: 0 0 0 0 rgba(245, 158, 11, 0); }
+            0% {
+                box-shadow: 0 0 0 0 rgba(245, 158, 11, 0.4);
+            }
+
+            70% {
+                box-shadow: 0 0 0 6px rgba(245, 158, 11, 0);
+            }
+
+            100% {
+                box-shadow: 0 0 0 0 rgba(245, 158, 11, 0);
+            }
         }
 
         .info-row {
@@ -573,22 +619,23 @@
             font-size: 0.85rem;
             color: var(--text-secondary);
         }
-        
+
         .footer-setup-note a {
             color: var(--accent-cyan);
             text-decoration: none;
         }
-        
+
         .footer-setup-note a:hover {
             text-decoration: underline;
         }
     </style>
 </head>
+
 <body>
 
-<div class="container {{if not .LoggedIn}}auth-container{{end}}">
+    <div class="container {{if not .LoggedIn}}auth-container{{end}}">
 
-    {{if not .LoggedIn}}
+        {{if not .LoggedIn}}
         <!-- LOGIN VIEW -->
         <div class="card">
             <div class="header">
@@ -597,15 +644,15 @@
             </div>
 
             {{if .Error}}
-                <div class="alert alert-error">
-                    {{.Error}}
-                </div>
+            <div class="alert alert-error">
+                {{.Error}}
+            </div>
             {{end}}
 
             {{if .Success}}
-                <div class="alert alert-success">
-                    {{.Success}}
-                </div>
+            <div class="alert alert-success">
+                {{.Success}}
+            </div>
             {{end}}
 
 
@@ -622,17 +669,18 @@
 
                 <div class="form-group">
                     <label for="code">TOTP Verification Code</label>
-                    <input type="text" id="code" name="code" placeholder="6-digit code" autocomplete="off" pattern="[0-9]{6}" required maxlength="6" inputmode="numeric">
+                    <input type="text" id="code" name="code" placeholder="6-digit code" autocomplete="off"
+                        pattern="[0-9]{6}" required maxlength="6" inputmode="numeric">
                 </div>
 
                 <button type="submit" class="btn">Authenticate</button>
             </form>
-            
+
             <div class="footer-setup-note">
                 Need to set up authenticator? Ask administrator for setup QR codes below.
             </div>
         </div>
-    {{else}}
+        {{else}}
         <!-- LOGGED IN DASHBOARD -->
         <input type="hidden" id="luks-state-tracker" value="{{.Status}}">
 
@@ -645,15 +693,15 @@
         </div>
 
         {{if .Error}}
-            <div class="alert alert-error">
-                {{.Error}}
-            </div>
+        <div class="alert alert-error">
+            {{.Error}}
+        </div>
         {{end}}
 
         {{if .Success}}
-            <div class="alert alert-success">
-                {{.Success}}
-            </div>
+        <div class="alert alert-success">
+            {{.Success}}
+        </div>
         {{end}}
 
         <div class="dashboard-grid" id="dashboard-status">
@@ -661,7 +709,8 @@
             <div class="card">
                 <div class="status-header">
                     <h2>Drive Details</h2>
-                    <span id="drive-status-badge" class="badge {{if eq .Status `UNLOCKED`}}badge-success{{else if eq .Status `DISCONNECTED_UNEXPECTEDLY`}}badge-warning{{else}}badge-danger{{end}}">
+                    <span id="drive-status-badge"
+                        class="badge {{if eq .Status `UNLOCKED`}}badge-success{{else if eq .Status `DISCONNECTED_UNEXPECTEDLY`}}badge-warning{{else}}badge-danger{{end}}">
                         {{.Status}}
                     </span>
                 </div>
@@ -679,7 +728,8 @@
                     <span class="info-value">{{.MountPoint}}</span>
                 </div>
 
-                <div id="drive-lock-reason-section" style="margin-top: 15px; {{if or (ne .Status `LOCKED`) (eq .LockReason ``)}}display: none;{{end}}color: var(--accent-danger); font-weight: 500; font-size: 0.95rem;">
+                <div id="drive-lock-reason-section"
+                    style="margin-top: 15px; {{if or (ne .Status `LOCKED`) (eq .LockReason ``)}}display: none;{{end}}color: var(--accent-danger); font-weight: 500; font-size: 0.95rem;">
                     <span>Reason: </span><strong id="drive-lock-reason">{{.LockReason}}</strong>
                 </div>
 
@@ -697,43 +747,54 @@
 
             <!-- CONTROLS CARD -->
             <div class="card actions-card">
-                <h2 style="font-size:1.4rem; border-bottom: 1px solid var(--border-color); padding-bottom: 15px;">Actions</h2>
-                
+                <h2 style="font-size:1.4rem; border-bottom: 1px solid var(--border-color); padding-bottom: 15px;">
+                    Actions</h2>
+
                 {{if eq .Status "LOCKED"}}
-                    <p style="color:var(--text-secondary); margin-bottom:10px;">You are fully authenticated and authorized to unlock the drive.</p>
-                    <form action="/unlock" method="POST">
-                        <button type="submit" class="btn btn-success">🔓 Unlock Encrypted Drive</button>
-                    </form>
+                <p style="color:var(--text-secondary); margin-bottom:10px;">You are fully authenticated and authorized
+                    to unlock the drive.</p>
+                <form action="/unlock" method="POST">
+                    <button type="submit" class="btn btn-success">🔓 Unlock Encrypted Drive</button>
+                </form>
                 {{else if eq .Status "DISCONNECTED_UNEXPECTEDLY"}}
-                    <p style="color:var(--accent-danger); margin-bottom:10px;">WARNING: The drive was unexpectedly disconnected. Once reconnected, click below to run safety check and mount.</p>
-                    <form action="/unlock" method="POST">
-                        <button type="submit" class="btn btn-success">🛠️ Recover & Unlock Drive</button>
-                    </form>
+                <p style="color:var(--accent-danger); margin-bottom:10px;">WARNING: The drive was unexpectedly
+                    disconnected. Once reconnected, click below to run safety check and mount.</p>
+                <form action="/unlock" method="POST">
+                    <button type="submit" class="btn btn-success">🛠️ Recover & Unlock Drive</button>
+                </form>
                 {{else}}
-                    <!-- UNLOCKED - ALL authenticated users can lock -->
-                    <p style="color:var(--text-secondary); margin-bottom:10px;">The encrypted drive is currently decrypted and mounted. Any authenticated user can trigger a manual secure lock.</p>
-                    <form action="/lock" method="POST">
-                        <button type="submit" class="btn btn-danger">🔒 Secure & Lock Drive</button>
-                    </form>
+                <!-- UNLOCKED - ALL authenticated users can lock -->
+                <p style="color:var(--text-secondary); margin-bottom:10px;">The encrypted drive is currently decrypted
+                    and mounted. Any authenticated user can trigger a manual secure lock.</p>
+                <form action="/lock" method="POST">
+                    <button type="submit" class="btn btn-danger">🔒 Secure & Lock Drive</button>
+                </form>
                 {{end}}
             </div>
         </div>
 
         <!-- MANAGER PRESENCE CARD -->
         <div class="card" style="margin-top: 25px;" id="manager-presence-card">
-            <h2 style="font-size:1.4rem; border-bottom: 1px solid var(--border-color); padding-bottom: 15px; margin-bottom: 20px;">Manager Presence & Gate</h2>
+            <h2
+                style="font-size:1.4rem; border-bottom: 1px solid var(--border-color); padding-bottom: 15px; margin-bottom: 20px;">
+                Manager Presence & Gate</h2>
             <div class="approval-list">
-                <div class="approval-item {{if eq .Manager1Presence `Active`}}approved{{else}}pending{{end}}" id="presence-m1-item">
-                    <span class="approval-indicator" id="presence-m1-dot" style="{{if eq .Manager1Presence `Active`}}background-color: var(--accent-success); box-shadow: 0 0 8px var(--accent-success);{{else if eq .Manager1Presence `Session expired`}}background-color: var(--accent-danger); box-shadow: 0 0 8px var(--accent-danger);{{else}}background-color: rgba(255, 255, 255, 0.15);{{end}}"></span>
+                <div class="approval-item {{if eq .Manager1Presence `Active`}}approved{{else}}pending{{end}}"
+                    id="presence-m1-item">
+                    <span class="approval-indicator" id="presence-m1-dot"
+                        style="{{if eq .Manager1Presence `Active`}}background-color: var(--accent-success); box-shadow: 0 0 8px var(--accent-success);{{else if eq .Manager1Presence `Session expired`}}background-color: var(--accent-danger); box-shadow: 0 0 8px var(--accent-danger);{{else}}background-color: rgba(255, 255, 255, 0.15);{{end}}"></span>
                     <span class="approval-text" id="presence-m1-text">Manager 1: {{.Manager1Presence}}</span>
                 </div>
-                <div class="approval-item {{if eq .Manager2Presence `Active`}}approved{{else}}pending{{end}}" id="presence-m2-item">
-                    <span class="approval-indicator" id="presence-m2-dot" style="{{if eq .Manager2Presence `Active`}}background-color: var(--accent-success); box-shadow: 0 0 8px var(--accent-success);{{else if eq .Manager2Presence `Session expired`}}background-color: var(--accent-danger); box-shadow: 0 0 8px var(--accent-danger);{{else}}background-color: rgba(255, 255, 255, 0.15);{{end}}"></span>
+                <div class="approval-item {{if eq .Manager2Presence `Active`}}approved{{else}}pending{{end}}"
+                    id="presence-m2-item">
+                    <span class="approval-indicator" id="presence-m2-dot"
+                        style="{{if eq .Manager2Presence `Active`}}background-color: var(--accent-success); box-shadow: 0 0 8px var(--accent-success);{{else if eq .Manager2Presence `Session expired`}}background-color: var(--accent-danger); box-shadow: 0 0 8px var(--accent-danger);{{else}}background-color: rgba(255, 255, 255, 0.15);{{end}}"></span>
                     <span class="approval-text" id="presence-m2-text">Manager 2: {{.Manager2Presence}}</span>
                 </div>
             </div>
 
-            <div id="manager-window-section" style="margin-top: 20px; {{if le .ManagerCountdownTimeLeft 0}}display: none;{{end}}">
+            <div id="manager-window-section"
+                style="margin-top: 20px; {{if le .ManagerCountdownTimeLeft 0}}display: none;{{end}}">
                 <div class="section-title" id="manager-window-title">Waiting for Manager...</div>
                 <div class="countdown-container">
                     <div class="countdown-time" id="manager-window-countdown">00:00</div>
@@ -746,15 +807,19 @@
 
         <!-- SETTINGS CARD (BOSS / MANAGERS) -->
         <div class="card" style="margin-top: 25px;">
-            <h2 style="font-size:1.4rem; border-bottom: 1px solid var(--border-color); padding-bottom: 15px; margin-bottom: 20px;">System Settings</h2>
+            <h2
+                style="font-size:1.4rem; border-bottom: 1px solid var(--border-color); padding-bottom: 15px; margin-bottom: 20px;">
+                System Settings</h2>
             <form action="/settings" method="POST">
                 <div class="form-group">
                     <label for="auto_lock_timeout">Auto-Lock Timeout (seconds, 60 - 3600)</label>
-                    <input type="number" id="auto_lock_timeout" name="auto_lock_timeout" min="60" max="3600" value="{{.AutoLockTimeout}}" required>
+                    <input type="number" id="auto_lock_timeout" name="auto_lock_timeout" min="60" max="3600"
+                        value="{{.AutoLockTimeout}}" required>
                 </div>
                 <div class="form-group">
                     <label for="session_timeout">Session Idle Timeout (seconds, 60 - 86400)</label>
-                    <input type="number" id="session_timeout" name="session_timeout" min="60" max="86400" value="{{.SessionTimeout}}" required>
+                    <input type="number" id="session_timeout" name="session_timeout" min="60" max="86400"
+                        value="{{.SessionTimeout}}" required>
                 </div>
                 <button type="submit" class="btn">Save Settings</button>
             </form>
@@ -762,47 +827,60 @@
 
         <!-- AUTOMATED DRIVE ONBOARDING CARD (BOSS ONLY) -->
         <div class="card" style="margin-top: 25px;">
-            <div style="display:flex; justify-content:space-between; align-items:center; border-bottom: 1px solid var(--border-color); padding-bottom: 15px; margin-bottom: 20px;">
+            <div
+                style="display:flex; justify-content:space-between; align-items:center; border-bottom: 1px solid var(--border-color); padding-bottom: 15px; margin-bottom: 20px;">
                 <h2 style="font-size:1.4rem; margin:0;">Automated Drive Onboarding</h2>
                 {{if eq .Role "Boss"}}
-                    <button class="btn btn-primary" onclick="scanCandidates()" style="padding: 8px 16px; font-size: 0.9rem;">🔍 Scan Candidate Drives</button>
+                <button class="btn btn-primary" onclick="scanCandidates()"
+                    style="padding: 8px 16px; font-size: 0.9rem;">🔍 Scan Candidate Drives</button>
                 {{else}}
-                    <span class="badge badge-warning">Boss-Only Feature</span>
+                <span class="badge badge-warning">Boss-Only Feature</span>
                 {{end}}
             </div>
 
             {{if eq .Role "Boss"}}
-                <!-- ONBOARDING PROGRESS CARD -->
-                <div id="onboarding-progress-container" style="display: none; margin-bottom: 25px; background: rgba(0, 0, 0, 0.3); border: 1px solid var(--border-color); border-radius: 12px; padding: 20px;">
-                    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 10px;">
-                        <h3 id="onboarding-step-title" style="font-size: 1.1rem; color: var(--accent-cyan); margin:0;">Step 0/14: Initializing...</h3>
-                        <span id="onboarding-status-badge" class="badge badge-warning">IN PROGRESS</span>
-                    </div>
-                    <p id="onboarding-step-desc" style="color: var(--text-secondary); font-size: 0.95rem; margin-bottom: 12px;">Preparing setup pipeline...</p>
-                    <div class="progress-bar-container" style="height: 12px; margin-bottom: 12px;">
-                        <div class="progress-bar" id="onboarding-progress-bar" style="width: 0%;"></div>
-                    </div>
-                    <p style="color: rgba(255, 255, 255, 0.45); font-size: 0.82rem; margin:0;">Note: Formatting (Step 6) and Filesystem Creation (Step 10) may take several minutes on large physical drives.</p>
+            <!-- ONBOARDING PROGRESS CARD -->
+            <div id="onboarding-progress-container"
+                style="display: none; margin-bottom: 25px; background: rgba(0, 0, 0, 0.3); border: 1px solid var(--border-color); border-radius: 12px; padding: 20px;">
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 10px;">
+                    <h3 id="onboarding-step-title" style="font-size: 1.1rem; color: var(--accent-cyan); margin:0;">Step
+                        0/14: Initializing...</h3>
+                    <span id="onboarding-status-badge" class="badge badge-warning">IN PROGRESS</span>
+                </div>
+                <p id="onboarding-step-desc"
+                    style="color: var(--text-secondary); font-size: 0.95rem; margin-bottom: 12px;">Preparing setup
+                    pipeline...</p>
+                <div class="progress-bar-container" style="height: 12px; margin-bottom: 12px;">
+                    <div class="progress-bar" id="onboarding-progress-bar" style="width: 0%;"></div>
+                </div>
+                <p style="color: rgba(255, 255, 255, 0.45); font-size: 0.82rem; margin:0;">Note: Formatting (Step 6) and
+                    Filesystem Creation (Step 10) may take several minutes on large physical drives.</p>
 
-                    <div id="onboarding-error-box" class="alert alert-danger" style="display: none; margin-top: 15px;">
-                        <strong>Onboarding Failure:</strong>
-                        <pre id="onboarding-error-text" style="white-space: pre-wrap; font-size: 0.85rem; margin-top: 5px; font-family: monospace;"></pre>
-                    </div>
-
-                    <div id="onboarding-success-box" class="alert alert-success" style="display: none; margin-top: 15px;">
-                        <strong>Onboarding Complete!</strong> Drive setup finished successfully. The new device is now configured and ready for normal unlock operations.
-                    </div>
+                <div id="onboarding-error-box" class="alert alert-danger" style="display: none; margin-top: 15px;">
+                    <strong>Onboarding Failure:</strong>
+                    <pre id="onboarding-error-text"
+                        style="white-space: pre-wrap; font-size: 0.85rem; margin-top: 5px; font-family: monospace;"></pre>
                 </div>
 
-                <!-- CANDIDATE DRIVES LIST -->
-                <div id="candidates-loading" style="display: none; text-align: center; color: var(--text-secondary); padding: 20px;">
-                    Scanning server block devices...
+                <div id="onboarding-success-box" class="alert alert-success" style="display: none; margin-top: 15px;">
+                    <strong>Onboarding Complete!</strong> Drive setup finished successfully. The new device is now
+                    configured and ready for normal unlock operations.
                 </div>
-                <div id="candidates-container">
-                    <p style="color: var(--text-secondary); font-size: 0.95rem;">Click <strong>Scan Candidate Drives</strong> to discover available unconfigured block devices on the server.</p>
-                </div>
+            </div>
+
+            <!-- CANDIDATE DRIVES LIST -->
+            <div id="candidates-loading"
+                style="display: none; text-align: center; color: var(--text-secondary); padding: 20px;">
+                Scanning server block devices...
+            </div>
+            <div id="candidates-container">
+                <p style="color: var(--text-secondary); font-size: 0.95rem;">Click <strong>Scan Candidate
+                        Drives</strong> to discover available unconfigured block devices on the server.</p>
+            </div>
             {{else}}
-                <p style="color: var(--text-secondary); font-size: 0.95rem;">Drive onboarding (destructive formatting, LUKS encryption, keyfile enrollment, and partitioning) requires <strong>Boss identity authorization</strong>.</p>
+            <p style="color: var(--text-secondary); font-size: 0.95rem;">Drive onboarding (destructive formatting, LUKS
+                encryption, keyfile enrollment, and partitioning) requires <strong>Boss identity authorization</strong>.
+            </p>
             {{end}}
         </div>
 
@@ -815,9 +893,10 @@
         <div id="tab-logs" class="card tab-content active" style="padding: 25px;">
             <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 15px;">
                 <h3 style="font-size:1.1rem;">Recent System Logs</h3>
-                <a href="/logs" target="_blank" style="color:var(--accent-cyan); font-size:0.85rem; text-decoration:none;">View Full Logs &rarr;</a>
+                <a href="/logs" target="_blank"
+                    style="color:var(--accent-cyan); font-size:0.85rem; text-decoration:none;">View Full Logs &rarr;</a>
             </div>
-            
+
             <div style="overflow-x:auto;">
                 <table class="audit-table">
                     <thead>
@@ -835,14 +914,16 @@
                             <td><strong>{{.User}}</strong></td>
                             <td style="font-family:monospace;">{{.Action}}</td>
                             <td>
-                                <span class="badge-status {{if eq .Status `SUCCESS`}}status-success{{else if eq .Status `CRITICAL`}}status-failure{{else}}status-failure{{end}}">
+                                <span
+                                    class="badge-status {{if eq .Status `SUCCESS`}}status-success{{else if eq .Status `CRITICAL`}}status-failure{{else}}status-failure{{end}}">
                                     {{.Status}}
                                 </span>
                             </td>
                         </tr>
                         {{else}}
                         <tr>
-                            <td colspan="4" style="text-align:center; color:var(--text-secondary);">No audits logged yet.</td>
+                            <td colspan="4" style="text-align:center; color:var(--text-secondary);">No audits logged
+                                yet.</td>
                         </tr>
                         {{end}}
                     </tbody>
@@ -852,8 +933,10 @@
 
         <div id="tab-qr" class="card tab-content" style="padding: 25px;">
             <h3 style="font-size:1.1rem; margin-bottom: 10px;">2FA Authenticator Configurations</h3>
-            <p style="color:var(--text-secondary); font-size:0.9rem; margin-bottom: 20px;">Use Google Authenticator, Microsoft Authenticator, Authy, or 2FAS to scan these setup QR codes. Once scanned, the app generates a dynamic verification code every 30 seconds.</p>
-            
+            <p style="color:var(--text-secondary); font-size:0.9rem; margin-bottom: 20px;">Use Google Authenticator,
+                Microsoft Authenticator, Authy, or 2FAS to scan these setup QR codes. Once scanned, the app generates a
+                dynamic verification code every 30 seconds.</p>
+
             <div class="qr-grid">
                 <div class="qr-card">
                     <h4>Boss</h4>
@@ -878,7 +961,7 @@
             function switchTab(tabId) {
                 document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
                 document.querySelectorAll('.tab-btn').forEach(el => el.classList.remove('active'));
-                
+
                 document.getElementById(tabId).classList.add('active');
                 event.target.classList.add('active');
             }
@@ -890,7 +973,7 @@
                         const res = await fetch('/api/status');
                         if (res.status === 200) {
                             const data = await res.json();
-                            
+
                             // Update Status Badge
                             const statusEl = document.getElementById("drive-status-badge");
                             if (statusEl) {
@@ -903,7 +986,7 @@
                                     statusEl.className = "badge badge-danger";
                                 }
                             }
-                            
+
                             // Update Auto Lock Countdown
                             const autoLockEl = document.getElementById("auto-lock-countdown");
                             const autoLockSection = document.getElementById("auto-lock-section");
@@ -914,7 +997,7 @@
                                     const secs = data.autoLockTimeLeft % 60;
                                     autoLockEl.textContent = `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
                                 }
-                                
+
                                 // Update progress bar
                                 const progressBar = document.getElementById("auto-lock-progress");
                                 if (progressBar) {
@@ -987,7 +1070,7 @@
                                 const mins = Math.floor(data.managerCountdownTimeLeft / 60);
                                 const secs = data.managerCountdownTimeLeft % 60;
                                 const timeStr = `${mins}:${secs.toString().padStart(2, '0')}`;
-                                
+
                                 if (managerWindowCountdown) {
                                     managerWindowCountdown.textContent = timeStr;
                                 }
@@ -1002,7 +1085,7 @@
                             } else {
                                 if (managerWindowSection) managerWindowSection.style.display = "none";
                             }
-                            
+
                             // Update Onboarding UI Progress
                             if (data.onboardingStatus) {
                                 updateOnboardingUI(data.onboardingStatus);
@@ -1104,12 +1187,12 @@
                 document.getElementById("modal-dev-model").textContent = candidate.model;
                 document.getElementById("modal-check-dev-text").textContent = candidate.name;
                 document.getElementById("modal-typed-req").textContent = candidate.name;
-                
+
                 document.getElementById("modal-check-confirm").checked = false;
                 document.getElementById("modal-input-dev").value = "";
                 document.getElementById("modal-input-pass").value = "";
                 document.getElementById("modal-input-pass-confirm").value = "";
-                
+
                 validateOnboardModal();
                 document.getElementById("onboard-modal").style.display = "flex";
             }
@@ -1118,10 +1201,20 @@
                 document.getElementById("onboard-modal").style.display = "none";
             }
 
-            function togglePassVisibility(id) {
-                const input = document.getElementById(id);
-                if (input) {
-                    input.type = input.type === "password" ? "text" : "password";
+            function copyPassphrase(inputId, btnEl) {
+                const input = document.getElementById(inputId);
+                if (input && input.value) {
+                    navigator.clipboard.writeText(input.value).then(() => {
+                        const orig = btnEl.innerText;
+                        btnEl.innerText = "✓ Copied";
+                        btnEl.style.color = "var(--accent-success)";
+                        setTimeout(() => {
+                            btnEl.innerText = orig;
+                            btnEl.style.color = "";
+                        }, 1500);
+                    }).catch(err => {
+                        console.error("Copy failed:", err);
+                    });
                 }
             }
 
@@ -1238,66 +1331,86 @@
                 }
             }
         </script>
-    {{end}}
+        {{end}}
 
-    <!-- DESTRUCTIVE CONFIRMATION MODAL (BOSS ONLY) -->
-    {{if eq .Role "Boss"}}
-    <div id="onboard-modal" style="display: none; position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; background: rgba(0, 0, 0, 0.75); backdrop-filter: blur(8px); z-index: 9999; justify-content: center; align-items: center; padding: 20px;">
-        <div class="card" style="max-width: 550px; width: 100%; border: 1px solid var(--accent-danger); box-shadow: 0 0 30px rgba(255, 77, 77, 0.25);">
-            <div style="display:flex; justify-content:space-between; align-items:center; border-bottom: 1px solid var(--border-color); padding-bottom: 15px; margin-bottom: 20px;">
-                <h3 style="color: var(--accent-danger); font-size: 1.3rem; margin:0;">⚠️ Destructive Onboarding Confirmation</h3>
-                <button onclick="closeOnboardModal()" style="background:none; border:none; color:var(--text-secondary); font-size:1.5rem; cursor:pointer;">&times;</button>
-            </div>
-
-            <div class="alert alert-danger" style="margin-bottom: 20px;">
-                <strong>WARNING: IRREVERSIBLE DATA LOSS</strong><br>
-                All files, partitions, and filesystems on <strong id="modal-dev-name">/dev/sdb</strong> will be permanently wiped.
-            </div>
-
-            <div style="margin-bottom: 15px; background: rgba(255, 255, 255, 0.05); padding: 12px; border-radius: 8px; font-size: 0.9rem;">
-                <div>Target Device: <strong id="modal-dev-path" style="color:var(--accent-cyan);">/dev/sdb</strong></div>
-                <div>Size: <span id="modal-dev-size">-</span> | Model: <span id="modal-dev-model">-</span></div>
-            </div>
-
-            <div class="form-group" style="margin-bottom: 15px;">
-                <label style="color: var(--accent-danger); font-weight: 600;">1. Confirmation Checkbox</label>
-                <label style="display: flex; align-items: center; gap: 10px; cursor: pointer; font-size: 0.9rem;">
-                    <input type="checkbox" id="modal-check-confirm" onchange="validateOnboardModal()">
-                    I understand this will permanently erase all data on <span id="modal-check-dev-text">/dev/sdb</span>.
-                </label>
-            </div>
-
-            <div class="form-group" style="margin-bottom: 15px;">
-                <label for="modal-input-dev">2. Type exact device path to confirm (<span id="modal-typed-req">/dev/sdb</span>)</label>
-                <input type="text" id="modal-input-dev" placeholder="/dev/sdb" autocomplete="off" oninput="validateOnboardModal()">
-            </div>
-
-            <div class="form-group" style="margin-bottom: 15px;">
-                <label for="modal-input-pass">3. LUKS Recovery Passphrase (Keyslot 0, min 12 chars)</label>
-                <div style="display:flex; gap:8px;">
-                    <input type="password" id="modal-input-pass" placeholder="Enter strong passphrase..." oninput="validateOnboardModal()" style="flex:1;">
-                    <button type="button" class="btn" onclick="togglePassVisibility('modal-input-pass')" style="padding:0 12px;">👁️</button>
+        <!-- DESTRUCTIVE CONFIRMATION MODAL (BOSS ONLY) -->
+        {{if eq .Role "Boss"}}
+        <div id="onboard-modal"
+            style="display: none; position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; background: rgba(0, 0, 0, 0.75); backdrop-filter: blur(8px); z-index: 9999; justify-content: center; align-items: center; padding: 20px;">
+            <div class="card"
+                style="max-width: 550px; width: 100%; border: 1px solid var(--accent-danger); box-shadow: 0 0 30px rgba(255, 77, 77, 0.25);">
+                <div
+                    style="display:flex; justify-content:space-between; align-items:center; border-bottom: 1px solid var(--border-color); padding-bottom: 15px; margin-bottom: 20px;">
+                    <h3 style="color: var(--accent-danger); font-size: 1.3rem; margin:0;">⚠️ Destructive Onboarding
+                        Confirmation</h3>
+                    <button onclick="closeOnboardModal()"
+                        style="background:none; border:none; color:var(--text-secondary); font-size:1.5rem; cursor:pointer;">&times;</button>
                 </div>
-            </div>
 
-            <div class="form-group" style="margin-bottom: 20px;">
-                <label for="modal-input-pass-confirm">4. Confirm Recovery Passphrase</label>
-                <div style="display:flex; gap:8px;">
-                    <input type="password" id="modal-input-pass-confirm" placeholder="Confirm passphrase..." oninput="validateOnboardModal()" style="flex:1;">
-                    <button type="button" class="btn" onclick="togglePassVisibility('modal-input-pass-confirm')" style="padding:0 12px;">👁️</button>
+                <div class="alert alert-danger" style="margin-bottom: 20px;">
+                    <strong>WARNING: IRREVERSIBLE DATA LOSS</strong><br>
+                    All files, partitions, and filesystems on <strong id="modal-dev-name">/dev/sdb</strong> will be
+                    permanently wiped.
                 </div>
-                <div id="pass-match-msg" style="font-size:0.82rem; margin-top:5px; color:var(--accent-danger); display:none;">Passphrases do not match or length &lt; 12</div>
-            </div>
 
-            <div style="display:flex; justify-content:flex-end; gap:12px;">
-                <button type="button" class="btn" onclick="closeOnboardModal()">Cancel</button>
-                <button type="button" id="btn-start-onboard" class="btn btn-danger" disabled onclick="submitOnboardPipeline()">Start Encryption & Setup</button>
+                <div
+                    style="margin-bottom: 15px; background: rgba(255, 255, 255, 0.05); padding: 12px; border-radius: 8px; font-size: 0.9rem;">
+                    <div>Target Device: <strong id="modal-dev-path" style="color:var(--accent-cyan);">/dev/sdb</strong>
+                    </div>
+                    <div>Size: <span id="modal-dev-size">-</span> | Model: <span id="modal-dev-model">-</span></div>
+                </div>
+
+                <div class="form-group" style="margin-bottom: 15px;">
+                    <label style="color: var(--accent-danger); font-weight: 600;">1. Confirmation Checkbox</label>
+                    <label style="display: flex; align-items: center; gap: 10px; cursor: pointer; font-size: 0.9rem;">
+                        <input type="checkbox" id="modal-check-confirm" onchange="validateOnboardModal()">
+                        I understand this will permanently erase all data on <span
+                            id="modal-check-dev-text">/dev/sdb</span>.
+                    </label>
+                </div>
+
+                <div class="form-group" style="margin-bottom: 15px;">
+                    <label for="modal-input-dev">2. Type exact device path to confirm (<span
+                            id="modal-typed-req">/dev/sdb</span>)</label>
+                    <input type="text" id="modal-input-dev" placeholder="/dev/sdb" autocomplete="off"
+                        oninput="validateOnboardModal()">
+                </div>
+
+                <div class="form-group" style="margin-bottom: 15px;">
+                    <label for="modal-input-pass">3. LUKS Recovery Passphrase (Keyslot 0, min 12 chars)</label>
+                    <div style="display:flex; gap:8px;">
+                        <input type="text" id="modal-input-pass" placeholder="Enter strong passphrase..."
+                            oninput="validateOnboardModal()" style="flex:1; min-width:0;">
+                        <button type="button" class="btn-icon" onclick="copyPassphrase('modal-input-pass', this)"
+                            title="Copy Passphrase">📋 Copy</button>
+                    </div>
+                </div>
+
+                <div class="form-group" style="margin-bottom: 20px;">
+                    <label for="modal-input-pass-confirm">4. Confirm Recovery Passphrase</label>
+                    <div style="display:flex; gap:8px;">
+                        <input type="text" id="modal-input-pass-confirm" placeholder="Confirm passphrase..."
+                            oninput="validateOnboardModal()" style="flex:1; min-width:0;">
+                        <button type="button" class="btn-icon"
+                            onclick="copyPassphrase('modal-input-pass-confirm', this)" title="Copy Passphrase">📋
+                            Copy</button>
+                    </div>
+                    <div id="pass-match-msg"
+                        style="font-size:0.82rem; margin-top:5px; color:var(--accent-danger); display:none;">Passphrases
+                        do not match or length &lt; 12</div>
+                </div>
+
+                <div style="display:flex; justify-content:flex-end; gap:12px;">
+                    <button type="button" class="btn" onclick="closeOnboardModal()">Cancel</button>
+                    <button type="button" id="btn-start-onboard" class="btn btn-danger" disabled
+                        onclick="submitOnboardPipeline()">Start Encryption & Setup</button>
+                </div>
             </div>
         </div>
-    </div>
-    {{end}}
+        {{end}}
 
-</div>
+    </div>
 
 </body>
+
 </html>
